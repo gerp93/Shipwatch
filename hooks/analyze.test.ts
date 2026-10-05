@@ -71,3 +71,13 @@ test('transitions toast a settled build and a new release, but never on the firs
   const done = [analyze(repo({ head: 'SUCCESS', latestRelease: { tagName: 'v2', publishedAt: '2026-10-05T11:00:00Z' } }), NOW, 6 * HOUR)]
   expect(transitions(snapshot(running), done)).toEqual(['✓ app main build passed', '⬆ app v2 released — ready to download'])
 })
+
+test('an untouched repo with a conflicted PR is stale; a building one never is', () => {
+  const old = { pushedAt: '2026-08-01T00:00:00Z' }
+  const stale = analyze(repo({ ...old, pullRequests: { nodes: [pr('SUCCESS', { updatedAt: '2026-08-01T00:00:00Z', mergeable: 'CONFLICTING' })] } }), NOW, 6 * HOUR)
+  expect(stale.isStale).toBe(true)
+  const building = analyze(repo({ ...old, pullRequests: { nodes: [pr('PENDING', { updatedAt: '2026-08-01T00:00:00Z' })] } }), NOW, 6 * HOUR)
+  expect(building.isStale).toBe(false)
+  const fresh = analyze(repo({ pullRequests: { nodes: [pr('SUCCESS', { mergeable: 'CONFLICTING' })] } }), NOW, 6 * HOUR)
+  expect(fresh.isStale).toBe(false)
+})

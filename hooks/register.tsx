@@ -18,6 +18,7 @@ const MAX_ACTIVITY_LOOKUPS = 8
 
 const INITIAL: Board = { owner: '', repos: [], updatedAt: 0, isLoading: false, error: null, source: null }
 const board = atom({ plugin: 'shipwatch', key: 'board' } as const, INITIAL)
+const showStale = atom({ plugin: 'shipwatch', key: 'showStale' } as const, false)
 
 const STEP_STYLE: Record<StepState, { icon: string; color?: string }> = {
   done: { icon: '●', color: 'green' },
@@ -50,6 +51,7 @@ type Config = {
   includeForks: boolean
   count: number
   idleMs: number
+  staleMs: number
   ignore: Set<string>
 }
 
@@ -77,7 +79,7 @@ async function refresh($: any): Promise<number> {
     const now: number = await $.clock.now()
     const repos = raw
       .filter(r => !r.isArchived && !cfg.ignore.has(r.name.toLowerCase()))
-      .map(r => analyze(r, now, RECENT_MS))
+      .map(r => analyze(r, now, RECENT_MS, cfg.staleMs))
       .sort(byUrgency)
 
     for (const r of repos.filter(r => r.level === 'running').slice(0, MAX_ACTIVITY_LOOKUPS)) {
@@ -119,6 +121,7 @@ export const register: Register = (on, options) => {
     includeForks: options.includeForks === true,
     count: Math.min(100, Math.max(1, Math.round(num(options.maxRepos, 40)))),
     idleMs: Math.max(15, num(options.pollSeconds, 60)) * 1000,
+    staleMs: Math.max(1, num(options.staleDays, 14)) * 86_400_000,
     ignore: new Set(
       str(options.ignoreRepos)
         .split(',')
@@ -150,7 +153,9 @@ export const register: Register = (on, options) => {
     const now: number = await $.clock.now()
     const columns = (e.props as { bodyColumns?: number }).bodyColumns ?? e.viewport?.columns ?? 80
 
-    const active = b.repos.filter(r => r.level !== 'idle')
+    const isStaleShown = await read($, showStale)
+    const active = b.repos.filter(r => r.level !== 'idle' && !r.isStale)
+    const stale = b.repos.filter(r => r.level !== 'idle' && r.isStale)
     const idle = b.repos.filter(r => r.level === 'idle')
     const nameWidth = Math.min(22, Math.max(8, ...active.map(r => r.name.length))) + 2
     const refreshLabel = b.isLoading ? 'Refreshing…' : 'Refresh'
@@ -232,6 +237,28 @@ export const register: Register = (on, options) => {
         {b.repos.length === 0 && !b.error && <Text dimColor>Fetching repos…</Text>}
         {active.length === 0 && b.repos.length > 0 && <Text color="green">Nothing in flight. All repos are quiet.</Text>}
         {active.map(repoRow)}
+        {stale.length > 0 && (
+          <Box flexDirection="column" marginBottom={1}>
+            <Box columnGap={2}>
+              <Text dimColor>Stale ({stale.length}): nothing moved for a while</Text>
+              <Button
+                key="stale"
+                hotkey="s"
+                label={isStaleShown ? 'Hide' : 'Show'}
+                onPress={() => void update($, showStale, shown => !shown)}
+              />
+            </Box>
+            {isStaleShown ? (
+              <Box flexDirection="column" marginTop={1}>
+                {stale.map(repoRow)}
+              </Box>
+            ) : (
+              <Text dimColor wrap="wrap">
+                {stale.map(r => `${r.name} ${ago(r.pushedAt, now)}`).join(' · ')}
+              </Text>
+            )}
+          </Box>
+        )}
         {idle.length > 0 && (
           <Box flexDirection="column" width={Math.max(20, columns - 2)}>
             <Text dimColor wrap="wrap">
@@ -244,7 +271,8 @@ export const register: Register = (on, options) => {
   })
 }
 
-const statusLine = (repos: readonly RepoView[]): string | undefined => {
+const statusLine = (all: readonly RepoView[]): string | undefined => {
+  const repos = all.filter(r => !r.isStale)
   const building = repos.filter(r => r.level === 'running').length
   const failing = repos.filter(r => r.level === 'fail').length
   const prs = repos.reduce((n, r) => n + r.prs.length, 0)

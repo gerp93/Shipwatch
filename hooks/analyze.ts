@@ -73,7 +73,7 @@ const steps = (...s: StepState[]): Steps => s as Steps
  * the head commit. `recentMs` is how long after a merge a missing release still
  * counts as "awaiting" rather than "this repo just doesn't release every commit".
  */
-export const analyze = (raw: RawRepo, now: number, recentMs: number): RepoView => {
+const classify = (raw: RawRepo, now: number, recentMs: number): RepoView => {
   const target = raw.defaultBranchRef?.target
   const headChecks = checksOf(target?.statusCheckRollup)
   const headDate = target?.committedDate ?? ''
@@ -91,6 +91,7 @@ export const analyze = (raw: RawRepo, now: number, recentMs: number): RepoView =
     release,
     prs,
     activity: [] as string[],
+    isStale: false,
   }
 
   const pr = prs[0]
@@ -140,6 +141,22 @@ export const analyze = (raw: RawRepo, now: number, recentMs: number): RepoView =
     level: isRecent ? 'pending' : 'idle',
     headline: isRecent ? `awaiting release · last ${release.tag}` : `unreleased commits · last ${release.tag}`,
   }
+}
+
+const DAY_MS = 86_400_000
+
+/**
+ * `classify` plus staleness: a repo nothing has touched for `staleMs` (a push, or
+ * activity on one of its PRs) and that is not building is stale. Old conflicted
+ * drafts would otherwise outrank the build you are actually waiting on.
+ */
+export const analyze = (raw: RawRepo, now: number, recentMs: number, staleMs: number = 14 * DAY_MS): RepoView => {
+  const view = classify(raw, now, recentMs)
+  const touched = Math.max(
+    Date.parse(raw.pushedAt) || 0,
+    ...(raw.pullRequests?.nodes ?? []).map(p => Date.parse(p.updatedAt) || 0),
+  )
+  return { ...view, isStale: view.level !== 'running' && now - touched > staleMs }
 }
 
 const URGENCY: Record<Level, number> = { fail: 0, running: 1, ready: 2, pending: 3, idle: 4 }

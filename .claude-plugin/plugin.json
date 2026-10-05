@@ -25,6 +25,12 @@
       "description": "Most recently pushed repos to track (1-100).",
       "default": 40
     },
+    "staleDays": {
+      "type": "number",
+      "title": "Stale after (days)",
+      "description": "A repo with no push or PR activity for this long, and nothing building, moves to the collapsed Stale group.",
+      "default": 14
+    },
     "includeForks": {
       "type": "boolean",
       "title": "Include forks",

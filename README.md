@@ -17,7 +17,8 @@ release. With several apps going at once it answers "which of these is waiting o
 ## What you get
 
 - **A pane** (`/shipwatch`): one block per repo that needs attention, ordered failing,
-  building, ready to merge, awaiting release. Quiet repos collapse to one line.
+  building, ready to merge, awaiting release. Stale repos (old conflicted drafts and the
+  like) and quiet ones collapse to one line each.
 - **A status line entry**: `◐ 2 building · ✗ 1 failing · 7 open PRs`.
 - **Toasts** when a build passes or fails, and when a new release is published.
 - **Adaptive polling**: every 20 s while something builds, every 60 s otherwise.
@@ -59,6 +60,7 @@ or put the repo (or a link to it) in your mods folder to have it hot-reload whil
 | `owner` | empty | User or org to watch. Empty means the account `gh` is signed in as. |
 | `pollSeconds` | `60` | Refresh interval while nothing is building. |
 | `maxRepos` | `40` | Most recently pushed repos to track (1-100). |
+| `staleDays` | `14` | A repo with no push or PR activity for this long, and nothing building, moves to a collapsed Stale group (`s` toggles it). |
 | `includeForks` | `false` | Also track forks. |
 | `ignoreRepos` | empty | Comma-separated repo names to skip. |
 | `githubToken` | empty | Fallback when `gh` can't run. Needs read access to repos. |

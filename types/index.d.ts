@@ -33,6 +33,8 @@ export type RepoView = {
   steps: [StepState, StepState, StepState, StepState]
   level: Level
   headline: string
+  /** Nothing has moved for longer than the stale cutoff and nothing is building. */
+  isStale: boolean
 }
 
 export type Board = {
@@ -48,6 +50,6 @@ export type Board = {
 
 declare module 'claude-code' {
   interface PluginState {
-    'shipwatch': { board: Board }
+    'shipwatch': { board: Board; showStale: boolean }
   }
 }
