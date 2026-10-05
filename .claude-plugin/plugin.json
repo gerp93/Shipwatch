@@ -1,0 +1,48 @@
+{
+  "name": "shipwatch",
+  "version": "0.1.0",
+  "description": "Dashboard pane for every repo under a GitHub owner: running builds, open PRs and a per-repo stepper from PR to release.",
+  "author": {
+    "name": "gerp93"
+  },
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "owner": {
+      "type": "string",
+      "title": "GitHub owner",
+      "description": "User or org whose repos to watch. Empty means the account `gh` is signed in as.",
+      "default": ""
+    },
+    "pollSeconds": {
+      "type": "number",
+      "title": "Idle poll interval (seconds)",
+      "description": "How often to refresh while nothing is building. While a build runs it refreshes every 20 seconds.",
+      "default": 60
+    },
+    "maxRepos": {
+      "type": "number",
+      "title": "Max repos",
+      "description": "Most recently pushed repos to track (1-100).",
+      "default": 40
+    },
+    "includeForks": {
+      "type": "boolean",
+      "title": "Include forks",
+      "description": "Also track forked repos.",
+      "default": false
+    },
+    "ignoreRepos": {
+      "type": "string",
+      "title": "Ignore repos",
+      "description": "Comma-separated repo names to leave out.",
+      "default": ""
+    },
+    "githubToken": {
+      "type": "string",
+      "title": "GitHub token (fallback)",
+      "description": "Only used when the `gh` CLI cannot be run from here. A token with repo read access.",
+      "sensitive": true,
+      "default": ""
+    }
+  }
+}
