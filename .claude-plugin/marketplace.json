@@ -1,0 +1,16 @@
+{
+  "name": "shipwatch",
+  "owner": {
+    "name": "gerp93"
+  },
+  "plugins": [
+    {
+      "name": "shipwatch",
+      "source": "./",
+      "description": "Dashboard pane for every repo under a GitHub owner: running builds, open PRs and a per-repo stepper from PR to release."
+    }
+  ],
+  "metadata": {
+    "description": "Shipwatch: a build and PR dashboard for Claude Code."
+  }
+}

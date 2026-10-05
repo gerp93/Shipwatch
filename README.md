@@ -47,13 +47,19 @@ running, then ready). With none it follows the default branch.
 
 ## Install
 
-Load it from a folder:
+From GitHub, no clone needed:
 
 ```bash
-claude --plugin-dir /path/to/Shipwatch
+claude plugin marketplace add gerp93/Shipwatch
+claude plugin install shipwatch@shipwatch
 ```
 
-or put the repo (or a link to it) in your mods folder to have it hot-reload while you edit.
+Then start a new session and run `/shipwatch`. Set options with
+`claude plugin configure shipwatch`.
+
+To work on it instead, point Claude Code at a clone: `claude --plugin-dir /path/to/Shipwatch`,
+or for sessions the desktop app starts, set `CLAUDE_CODE_PLUGIN_DIRS` (and
+`CLAUDE_CODE_PLUGIN_DIR_WATCH=1` to reload on save) in the `env` block of `~/.claude/settings.json`.
 
 ## Options
 
