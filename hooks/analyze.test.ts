@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { analyze, failedOnMain, fixPrompt, snapshot, transitions } from './analyze'
+import { analyze, failedOnMain, fixPrompt, isInfraMessage, markInfra, snapshot, transitions } from './analyze'
 import type { RawRepo } from './analyze'
 
 const NOW = Date.parse('2026-10-05T12:00:00Z')
@@ -103,4 +103,21 @@ test('fixPrompt refuses names that could carry instructions', () => {
   expect(fixPrompt('o', { ...ok, name: 'app; rm -rf' })).toBeNull()
   expect(fixPrompt('o/../x', ok)).toBeNull()
   expect(fixPrompt('o', { ...ok, headOid: 'zz' })).toBeNull()
+})
+
+test('runner-outage annotations are told apart from real failures', () => {
+  expect(isInfraMessage('The job was not acquired by Runner of type hosted even after multiple attempts')).toBe(true)
+  expect(isInfraMessage('The hosted runner lost communication with the server.')).toBe(true)
+  expect(isInfraMessage('Process completed with exit code 1.')).toBe(false)
+})
+
+test('markInfra relabels only a failing main build, and keeps it out of auto-fix', () => {
+  const running = [analyze(repo({ head: 'PENDING' }), NOW, 6 * HOUR)]
+  const failing = analyze(repo({ head: 'FAILURE' }), NOW, 6 * HOUR)
+  const infra = markInfra(failing, true)
+  expect(infra.isInfra).toBe(true)
+  expect(infra.headline).toContain('runner outage')
+  expect(markInfra(failing, false)).toEqual(failing)
+  expect(failedOnMain(snapshot(running), [infra])).toEqual([])
+  expect(failedOnMain(snapshot(running), [failing]).length).toBe(1)
 })

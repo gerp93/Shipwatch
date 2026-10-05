@@ -94,6 +94,7 @@ const classify = (raw: RawRepo, now: number, recentMs: number): RepoView => {
     prs,
     activity: [] as string[],
     isStale: false,
+    isInfra: false,
   }
 
   const pr = prs[0]
@@ -218,7 +219,7 @@ export const ago = (iso: string, now: number): string => {
 export const failedOnMain = (before: Seen, repos: readonly RepoView[]): RepoView[] =>
   Object.keys(before).length === 0
     ? []
-    : repos.filter(r => before[r.name]?.head === 'running' && r.headChecks === 'failing')
+    : repos.filter(r => before[r.name]?.head === 'running' && r.headChecks === 'failing' && !r.isInfra)
 
 // Names the fix prompt interpolates come from GitHub and are controlled by whoever
 // owns the repo (a branch name can hold nearly anything), so only plain ones are
@@ -246,3 +247,19 @@ export const fixPrompt = (owner: string, r: RepoView): string | null => {
     '4. If you cannot tell what broke, say so instead of guessing.',
   ].join('\n')
 }
+
+// Annotation text GitHub puts on a check run that failed for its own reasons.
+const INFRA_PATTERNS = [
+  /not acquired by Runner/i,
+  /hosted runner lost communication/i,
+  /runner has received a shutdown signal/i,
+]
+
+/** Whether a check-run annotation says GitHub, not the code, failed the job. */
+export const isInfraMessage = (message: string): boolean => INFRA_PATTERNS.some(p => p.test(message))
+
+/** `view` re-labelled as an infrastructure failure when its main build failed for that reason. */
+export const markInfra = (view: RepoView, isInfra: boolean): RepoView =>
+  isInfra && view.level === 'fail' && view.headline === 'main build failing'
+    ? { ...view, isInfra: true, headline: 'main CI never ran (GitHub runner outage)' }
+    : view

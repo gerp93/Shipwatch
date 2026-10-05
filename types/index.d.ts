@@ -38,6 +38,8 @@ export type RepoView = {
   headline: string
   /** Nothing has moved for longer than the stale cutoff and nothing is building. */
   isStale: boolean
+  /** The default-branch build failed because GitHub never ran it (a runner outage), not because of the code. */
+  isInfra: boolean
 }
 
 export type Board = {

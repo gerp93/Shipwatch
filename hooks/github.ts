@@ -1,3 +1,4 @@
+import { isInfraMessage } from './analyze'
 import type { RawRepo } from './analyze'
 
 /**
@@ -138,4 +139,31 @@ export const fetchActivity = async (io: IO, access: Access, owner: string, repo:
   return runs
     .filter(r => r.status === 'in_progress' || r.status === 'queued' || r.status === 'pending')
     .map(r => `${r.name ?? 'workflow'} · ${r.head_branch ?? '?'}`)
+}
+
+/**
+ * True when the commit's failed checks failed because GitHub never ran them
+ * (runner not acquired, runner lost), judged from the check runs' annotations:
+ * at least one check shows that, and no failed or timed-out check lacks it.
+ * Plain cancelled runs (a newer push superseding one) are ignored unless they
+ * carry the outage annotation, which GitHub files them under too.
+ */
+export const fetchInfraFailure = async (
+  io: IO,
+  access: Access,
+  owner: string,
+  repo: string,
+  sha: string,
+): Promise<boolean> => {
+  const out = await rest(io, access, `repos/${owner}/${repo}/commits/${sha}/check-runs?per_page=50`)
+  const candidates: Array<{ id: number; conclusion?: string }> = (out?.check_runs ?? []).filter(
+    (c: { conclusion?: string }) => c.conclusion === 'failure' || c.conclusion === 'timed_out' || c.conclusion === 'cancelled',
+  )
+  let sawOutage = false
+  for (const run of candidates.slice(0, 15)) {
+    const notes: Array<{ message?: string }> = await rest(io, access, `repos/${owner}/${repo}/check-runs/${run.id}/annotations`)
+    if (notes.some(n => isInfraMessage(n.message ?? ''))) sawOutage = true
+    else if (run.conclusion !== 'cancelled') return false
+  }
+  return sawOutage
 }

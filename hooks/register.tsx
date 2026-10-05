@@ -2,9 +2,9 @@ import { atom, read, update } from 'claude-code'
 import type { Register } from 'claude-code'
 
 import type { Board, Checks, Level, PrView, RepoView, StepState } from '../types'
-import { analyze, ago, byUrgency, failedOnMain, fixPrompt, snapshot, transitions } from './analyze'
+import { analyze, ago, byUrgency, failedOnMain, fixPrompt, markInfra, snapshot, transitions } from './analyze'
 import type { Seen } from './analyze'
-import { connect, fetchActivity, fetchRepos, resolveOwner } from './github'
+import { connect, fetchActivity, fetchInfraFailure, fetchRepos, resolveOwner } from './github'
 import type { Access, IO } from './github'
 
 const PANE = 'shipwatch'
@@ -13,6 +13,8 @@ const STEP_LABELS = ['PR', 'Build', 'Merged', 'Released'] as const
 const RECENT_MS = 6 * 60 * 60 * 1000
 const ACTIVE_POLL_MS = 20_000
 const ERROR_POLL_MS = 60_000
+/** How long a runner-outage verdict for a commit is trusted: a re-run can change it. */
+const INFRA_TTL_MS = 5 * 60_000
 const MAX_PRS_SHOWN = 3
 const MAX_ACTIVITY_LOOKUPS = 8
 
@@ -63,6 +65,7 @@ let seen: Seen = {}
 let access: Access | undefined
 let resolvedOwner = ''
 let isPolling = false
+const infraVerdicts = new Map<string, { isInfra: boolean; at: number }>()
 /** `repo:commit` pairs already sent for fixing, and how many prompts this load has sent. */
 const prompted = new Set<string>()
 let promptCount = 0
@@ -86,6 +89,24 @@ async function refresh($: any): Promise<number> {
       .filter(r => !r.isArchived && !cfg.ignore.has(r.name.toLowerCase()))
       .map(r => analyze(r, now, RECENT_MS, cfg.staleMs))
       .sort(byUrgency)
+
+    for (let i = 0; i < repos.length; i++) {
+      const r = repos[i]!
+      if (r.level !== 'fail' || r.headline !== 'main build failing' || r.isStale) continue
+      const key = `${r.name}:${r.headOid}`
+      let verdict = infraVerdicts.get(key)
+      if (!verdict || now - verdict.at > INFRA_TTL_MS) {
+        let isInfra = false
+        try {
+          isInfra = await fetchInfraFailure(io, access, resolvedOwner, r.name, r.headOid)
+        } catch {
+          // Can't tell: treat it as the code's failure rather than hide it.
+        }
+        verdict = { isInfra, at: now }
+        infraVerdicts.set(key, verdict)
+      }
+      repos[i] = markInfra(r, verdict.isInfra)
+    }
 
     for (const r of repos.filter(r => r.level === 'running').slice(0, MAX_ACTIVITY_LOOKUPS)) {
       try {
@@ -224,7 +245,7 @@ export const register: Register = (on, options) => {
           {stepper(r.steps)}
         </Box>
         <Box paddingLeft={2}>
-          <Text color={LEVEL_COLOR[r.level]}>{r.headline}</Text>
+          <Text color={r.isInfra ? 'yellow' : LEVEL_COLOR[r.level]}>{r.headline}</Text>
           <Text dimColor> · pushed {since(r.pushedAt)}</Text>
         </Box>
         {r.activity.map(line => (
@@ -298,11 +319,13 @@ export const register: Register = (on, options) => {
 const statusLine = (all: readonly RepoView[]): string | undefined => {
   const repos = all.filter(r => !r.isStale)
   const building = repos.filter(r => r.level === 'running').length
-  const failing = repos.filter(r => r.level === 'fail').length
+  const failing = repos.filter(r => r.level === 'fail' && !r.isInfra).length
+  const outage = repos.filter(r => r.isInfra).length
   const prs = repos.reduce((n, r) => n + r.prs.length, 0)
   const parts: string[] = []
   if (building) parts.push(`◐ ${building} building`)
   if (failing) parts.push(`✗ ${failing} failing`)
+  if (outage) parts.push(`⚠ ${outage} CI outage`)
   if (prs) parts.push(`${prs} open PR${prs === 1 ? '' : 's'}`)
   return parts.length ? parts.join(' · ') : undefined
 }
