@@ -105,6 +105,14 @@ claude plugin test .
   hours old.
 - Whether the new build is installed on your machine isn't tracked yet.
 
+## Standards
+
+Shipwatch follows [KVG_Standards](https://github.com/gerp93/KVG_Standards), specifically its
+[Claude Code plugins](https://github.com/gerp93/KVG_Standards/blob/main/claude-plugins.md)
+standard: CI runs `claude plugin validate` and `claude plugin test`, every push to `main` is
+tagged and released automatically, and `version` is deliberately omitted from the manifest
+so every commit is an update for installed copies.
+
 ## License
 
 AGPL-3.0. See [LICENSE](LICENSE).
