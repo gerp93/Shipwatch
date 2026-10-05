@@ -101,10 +101,15 @@ async function refresh($: any): Promise<number> {
         const key = `${r.name}:${r.headOid}`
         if (prompted.has(key) || promptCount >= cfg.autoFixLimit) continue
         prompted.add(key)
+        const text = fixPrompt(resolvedOwner, r)
+        if (!text) {
+          $.ui.toast(`Shipwatch: ${r.name} main build failed (unusual name, not auto-fixing)`)
+          continue
+        }
         promptCount += 1
         $.ui.toast(`Shipwatch: asking Claude to look into ${r.name} main (${promptCount}/${cfg.autoFixLimit})`)
         // Queued: it starts its own turn once this session is idle.
-        void $.prompt.submit({ text: fixPrompt(resolvedOwner, r) })
+        void $.prompt.submit({ text })
       }
     }
     seen = snapshot(repos)

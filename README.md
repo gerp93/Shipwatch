@@ -96,6 +96,9 @@ claude plugin test .
 
 ## Limits
 
+- `autoFix` only fires for plain owner, repo, branch and commit names (letters, digits,
+  `. _ - /`). A name with anything else gets a toast and no prompt, because those names are
+  controlled by whoever owns the repo and go into a prompt Claude acts on.
 - It sees what GitHub's check rollup reports. A repo with no CI shows no build step.
 - "Released" is judged by release date against the head commit, so a repo that doesn't
   publish a release for every merge shows "unreleased commits" once the merge is a few

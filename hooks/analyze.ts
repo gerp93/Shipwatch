@@ -220,9 +220,24 @@ export const failedOnMain = (before: Seen, repos: readonly RepoView[]): RepoView
     ? []
     : repos.filter(r => before[r.name]?.head === 'running' && r.headChecks === 'failing')
 
-/** The prompt that wakes a session to look into a broken default-branch build. */
-export const fixPrompt = (owner: string, r: RepoView): string =>
-  [
+// Names the fix prompt interpolates come from GitHub and are controlled by whoever
+// owns the repo (a branch name can hold nearly anything), so only plain ones are
+// allowed through: anything else gets no auto-fix prompt rather than a sanitized one.
+const SAFE_OWNER = /^[A-Za-z0-9-]{1,39}$/
+const SAFE_REPO = /^[A-Za-z0-9._-]{1,100}$/
+const SAFE_BRANCH = /^[A-Za-z0-9._/-]{1,100}$/
+const SAFE_OID = /^[0-9a-f]{7,64}$/
+
+/**
+ * The prompt that wakes a session to look into a broken default-branch build, or
+ * null when the owner, repo, branch or commit id holds anything beyond plain
+ * name characters.
+ */
+export const fixPrompt = (owner: string, r: RepoView): string | null => {
+  if (!SAFE_OWNER.test(owner) || !SAFE_REPO.test(r.name) || !SAFE_BRANCH.test(r.branch) || !SAFE_OID.test(r.headOid)) {
+    return null
+  }
+  return [
     `Shipwatch: the build on ${r.branch} just failed in ${owner}/${r.name} (commit ${r.headOid.slice(0, 7)}).`,
     'Do this once, then stop:',
     `1. Find the failing run: \`gh run list -R ${owner}/${r.name} --branch ${r.branch} --limit 3\`, then \`gh run view <id> -R ${owner}/${r.name} --log-failed\`.`,
@@ -230,3 +245,4 @@ export const fixPrompt = (owner: string, r: RepoView): string =>
     `3. Otherwise fix it in a local clone of the repo (look next to the current project; else \`gh repo clone\`), on a new branch. Never push to ${r.branch}. Open a PR following my usual PR rules.`,
     '4. If you cannot tell what broke, say so instead of guessing.',
   ].join('\n')
+}
