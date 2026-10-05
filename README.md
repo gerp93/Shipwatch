@@ -21,6 +21,8 @@ release. With several apps going at once it answers "which of these is waiting o
   like) and quiet ones collapse to one line each.
 - **A status line entry**: `◐ 2 building · ✗ 1 failing · 7 open PRs`.
 - **Toasts** when a build passes or fails, and when a new release is published.
+- **Auto-fix (opt-in)**: a broken default-branch build can wake an idle session with a
+  fix request, so a failure after an auto-merge doesn't wait for you to notice.
 - **Adaptive polling**: every 20 s while something builds, every 60 s otherwise.
   Press `r` in the pane to refresh now.
 
@@ -61,6 +63,8 @@ or put the repo (or a link to it) in your mods folder to have it hot-reload whil
 | `pollSeconds` | `60` | Refresh interval while nothing is building. |
 | `maxRepos` | `40` | Most recently pushed repos to track (1-100). |
 | `staleDays` | `14` | A repo with no push or PR activity for this long, and nothing building, moves to a collapsed Stale group (`s` toggles it). |
+| `autoFix` | `false` | When a default-branch build goes from running to failing, queue a prompt in the session asking Claude to find the cause and open a fix PR (never a direct push). Starts its own turn once the session is idle. |
+| `autoFixLimit` | `5` | Most fix prompts per session; one per failing commit. |
 | `includeForks` | `false` | Also track forks. |
 | `ignoreRepos` | empty | Comma-separated repo names to skip. |
 | `githubToken` | empty | Fallback when `gh` can't run. Needs read access to repos. |

@@ -49,6 +49,18 @@
       "description": "Only used when the `gh` CLI cannot be run from here. A token with repo read access.",
       "sensitive": true,
       "default": ""
+    },
+    "autoFix": {
+      "type": "boolean",
+      "title": "Auto-fix broken main builds",
+      "description": "When a default-branch build goes from running to failing, queue a prompt in this session asking Claude to find the cause and open a fix PR. Runs only while a session is open and idle.",
+      "default": false
+    },
+    "autoFixLimit": {
+      "type": "number",
+      "title": "Auto-fix limit per session",
+      "description": "Most fix prompts to queue in one session, so a failure that can't be fixed doesn't loop.",
+      "default": 5
     }
   }
 }

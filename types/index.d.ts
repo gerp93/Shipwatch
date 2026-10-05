@@ -25,6 +25,9 @@ export type RepoView = {
   headChecks: Checks
   /** The default branch's head commit date, ISO; empty when the repo has no commits. */
   headDate: string
+  /** The default branch's name and head commit id; empty when the repo has no commits. */
+  branch: string
+  headOid: string
   release: { tag: string; publishedAt: string } | null
   prs: PrView[]
   /** Workflow runs in flight, as `name · branch`. */

@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { analyze, snapshot, transitions } from './analyze'
+import { analyze, failedOnMain, fixPrompt, snapshot, transitions } from './analyze'
 import type { RawRepo } from './analyze'
 
 const NOW = Date.parse('2026-10-05T12:00:00Z')
@@ -80,4 +80,15 @@ test('an untouched repo with a conflicted PR is stale; a building one never is',
   expect(building.isStale).toBe(false)
   const fresh = analyze(repo({ pullRequests: { nodes: [pr('SUCCESS', { mergeable: 'CONFLICTING' })] } }), NOW, 6 * HOUR)
   expect(fresh.isStale).toBe(false)
+})
+
+test('failedOnMain fires once on running -> failing, never on first poll or a steady failure', () => {
+  const running = [analyze(repo({ head: 'PENDING' }), NOW, 6 * HOUR)]
+  const failing = [analyze(repo({ head: 'FAILURE' }), NOW, 6 * HOUR)]
+  expect(failedOnMain({}, failing)).toEqual([])
+  expect(failedOnMain(snapshot(running), failing).map(r => r.name)).toEqual(['app'])
+  expect(failedOnMain(snapshot(failing), failing)).toEqual([])
+  const prompt = fixPrompt('o', failing[0]!)
+  expect(prompt).toContain('o/app')
+  expect(prompt).toContain('Never push to main')
 })

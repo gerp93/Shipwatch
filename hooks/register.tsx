@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { Register } from 'claude-code'
 
 import type { Board, Checks, Level, PrView, RepoView, StepState } from '../types'
-import { analyze, ago, byUrgency, snapshot, transitions } from './analyze'
+import { analyze, ago, byUrgency, failedOnMain, fixPrompt, snapshot, transitions } from './analyze'
 import type { Seen } from './analyze'
 import { connect, fetchActivity, fetchRepos, resolveOwner } from './github'
 import type { Access, IO } from './github'
@@ -52,6 +52,8 @@ type Config = {
   count: number
   idleMs: number
   staleMs: number
+  autoFix: boolean
+  autoFixLimit: number
   ignore: Set<string>
 }
 
@@ -61,6 +63,9 @@ let seen: Seen = {}
 let access: Access | undefined
 let resolvedOwner = ''
 let isPolling = false
+/** `repo:commit` pairs already sent for fixing, and how many prompts this load has sent. */
+const prompted = new Set<string>()
+let promptCount = 0
 let timer: { cancel: () => void } | undefined
 
 async function refresh($: any): Promise<number> {
@@ -91,6 +96,17 @@ async function refresh($: any): Promise<number> {
     }
 
     for (const line of transitions(seen, repos)) $.ui.toast(line)
+    if (cfg.autoFix) {
+      for (const r of failedOnMain(seen, repos)) {
+        const key = `${r.name}:${r.headOid}`
+        if (prompted.has(key) || promptCount >= cfg.autoFixLimit) continue
+        prompted.add(key)
+        promptCount += 1
+        $.ui.toast(`Shipwatch: asking Claude to look into ${r.name} main (${promptCount}/${cfg.autoFixLimit})`)
+        // Queued: it starts its own turn once this session is idle.
+        void $.prompt.submit({ text: fixPrompt(resolvedOwner, r) })
+      }
+    }
     seen = snapshot(repos)
     $.ui.status(statusLine(repos))
 
@@ -122,6 +138,8 @@ export const register: Register = (on, options) => {
     count: Math.min(100, Math.max(1, Math.round(num(options.maxRepos, 40)))),
     idleMs: Math.max(15, num(options.pollSeconds, 60)) * 1000,
     staleMs: Math.max(1, num(options.staleDays, 14)) * 86_400_000,
+    autoFix: options.autoFix === true,
+    autoFixLimit: Math.max(0, Math.round(num(options.autoFixLimit, 5))),
     ignore: new Set(
       str(options.ignoreRepos)
         .split(',')
@@ -226,6 +244,7 @@ export const register: Register = (on, options) => {
           <Text dimColor>
             {b.updatedAt ? `updated ${since(new Date(b.updatedAt).toISOString())}` : 'loading…'}
             {b.source ? ` · via ${b.source}` : ''}
+            {cfg.autoFix ? ' · auto-fix on' : ''}
           </Text>
           <Button key="refresh" hotkey="r" label={refreshLabel} onPress={() => void refresh($).then(d => loop($, d))} />
         </Box>

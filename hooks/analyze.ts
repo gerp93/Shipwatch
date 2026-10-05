@@ -88,6 +88,8 @@ const classify = (raw: RawRepo, now: number, recentMs: number): RepoView => {
     pushedAt: raw.pushedAt,
     headChecks,
     headDate,
+    branch: raw.defaultBranchRef?.name ?? '',
+    headOid: target?.oid ?? '',
     release,
     prs,
     activity: [] as string[],
@@ -211,3 +213,20 @@ export const ago = (iso: string, now: number): string => {
   const hr = Math.floor(min / 60)
   return hr < 24 ? `${hr}h` : `${Math.floor(hr / 24)}d`
 }
+
+/** Repos whose default-branch build went from running to failing since `before`. */
+export const failedOnMain = (before: Seen, repos: readonly RepoView[]): RepoView[] =>
+  Object.keys(before).length === 0
+    ? []
+    : repos.filter(r => before[r.name]?.head === 'running' && r.headChecks === 'failing')
+
+/** The prompt that wakes a session to look into a broken default-branch build. */
+export const fixPrompt = (owner: string, r: RepoView): string =>
+  [
+    `Shipwatch: the build on ${r.branch} just failed in ${owner}/${r.name} (commit ${r.headOid.slice(0, 7)}).`,
+    'Do this once, then stop:',
+    `1. Find the failing run: \`gh run list -R ${owner}/${r.name} --branch ${r.branch} --limit 3\`, then \`gh run view <id> -R ${owner}/${r.name} --log-failed\`.`,
+    '2. Decide the cause. If it is a flaky test, an outage, or something outside the code (secrets, quota, runner), do not change code: tell me what it is.',
+    `3. Otherwise fix it in a local clone of the repo (look next to the current project; else \`gh repo clone\`), on a new branch. Never push to ${r.branch}. Open a PR following my usual PR rules.`,
+    '4. If you cannot tell what broke, say so instead of guessing.',
+  ].join('\n')
