@@ -92,7 +92,7 @@ const classify = (raw: RawRepo, now: number, recentMs: number): RepoView => {
     headOid: target?.oid ?? '',
     release,
     prs,
-    activity: [] as string[],
+    activity: [] as RepoView['activity'],
     isStale: false,
     isInfra: false,
   }

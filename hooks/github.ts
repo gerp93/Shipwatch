@@ -132,13 +132,18 @@ export const fetchRepos = async (
   return nodes.filter(Boolean)
 }
 
-/** Names of the workflow runs in flight on a repo, as `workflow · branch`. */
-export const fetchActivity = async (io: IO, access: Access, owner: string, repo: string): Promise<string[]> => {
+/** The workflow runs in flight on a repo: `workflow · branch`, and the run's page. */
+export const fetchActivity = async (
+  io: IO,
+  access: Access,
+  owner: string,
+  repo: string,
+): Promise<Array<{ text: string; url: string }>> => {
   const out = await rest(io, access, `repos/${owner}/${repo}/actions/runs?per_page=10`)
-  const runs: Array<{ name?: string; head_branch?: string; status?: string }> = out?.workflow_runs ?? []
+  const runs: Array<{ name?: string; head_branch?: string; status?: string; html_url?: string }> = out?.workflow_runs ?? []
   return runs
     .filter(r => r.status === 'in_progress' || r.status === 'queued' || r.status === 'pending')
-    .map(r => `${r.name ?? 'workflow'} · ${r.head_branch ?? '?'}`)
+    .map(r => ({ text: `${r.name ?? 'workflow'} · ${r.head_branch ?? '?'}`, url: r.html_url ?? '' }))
 }
 
 /**

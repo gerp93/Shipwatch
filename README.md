@@ -38,6 +38,25 @@ release. With several apps going at once it answers "which of these is waiting o
 With an open PR the stepper follows the most urgent one (conflicts or failing checks, then
 running, then ready). With none it follows the default branch.
 
+### Links
+
+Most text in the pane is a link: the repo name, each stepper step, the headline, PR lines,
+and the workflow runs in flight.
+
+| Click | Goes to |
+|---|---|
+| Repo name | The repo |
+| PR | The PR the stepper follows, else the repo's pull requests |
+| Build | That PR's checks, else the default branch's workflow runs |
+| Merged | The default branch's commits |
+| Released | The latest release, else the releases page |
+| Headline | The PR for a conflict or draft, otherwise the build page |
+| A run in flight | That workflow run |
+
+The engine refuses a whole pane if one link target is malformed, so every URL is checked
+first (`https:`, printable ASCII, no `@`, spaces or dot segments). A URL that fails the check
+just shows as plain text.
+
 ## Requirements
 
 - Claude Code with function-hook plugins (the desktop Code tab or the CLI).

@@ -30,8 +30,8 @@ export type RepoView = {
   headOid: string
   release: { tag: string; publishedAt: string } | null
   prs: PrView[]
-  /** Workflow runs in flight, as `name · branch`. */
-  activity: string[]
+  /** Workflow runs in flight: `text` is `name · branch`, `url` the run's page on GitHub (may be empty). */
+  activity: Array<{ text: string; url: string }>
   /** PR, Build, Merged, Released. */
   steps: [StepState, StepState, StepState, StepState]
   level: Level

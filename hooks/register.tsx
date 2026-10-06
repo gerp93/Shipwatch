@@ -6,6 +6,8 @@ import { analyze, ago, byUrgency, failedOnMain, fixPrompt, markInfra, snapshot, 
 import type { Seen } from './analyze'
 import { connect, fetchActivity, fetchInfraFailure, fetchRepos, resolveOwner } from './github'
 import type { Access, IO } from './github'
+import { headlineLink, safeHref, stepLinks } from './links'
+import type { StepLinks } from './links'
 
 const PANE = 'shipwatch'
 const STEP_LABELS = ['PR', 'Build', 'Merged', 'Released'] as const
@@ -192,7 +194,7 @@ export const register: Register = (on, options) => {
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
-    const { Box, Text, Button } = $.ui.resolve(e)
+    const { Box, Text, Button, Link } = $.ui.resolve(e)
     const b = await read($, board)
     const now: number = await $.clock.now()
     const columns = (e.props as { bodyColumns?: number }).bodyColumns ?? e.viewport?.columns ?? 80
@@ -209,14 +211,17 @@ export const register: Register = (on, options) => {
       return age === 'now' || age === '' ? 'now' : `${age} ago`
     }
 
-    const stepper = (steps: RepoView['steps']) => (
+    // Text that links when its URL passes the engine's href rules, plain text otherwise.
+    const linked = (href: string | undefined, text: string) => (href ? <Link href={href}>{text}</Link> : text)
+
+    const stepper = (steps: RepoView['steps'], links: StepLinks) => (
       <Box>
         {steps.map((s, i) => {
           const style = STEP_STYLE[s]
           return (
             <Box>
               <Text color={style.color} dimColor={s === 'todo'} bold={s === 'running'}>
-                {style.icon} {STEP_LABELS[i]}
+                {style.icon} {linked(links[i], STEP_LABELS[i])}
               </Text>
               {i < steps.length - 1 && <Text dimColor> ─ </Text>}
             </Box>
@@ -227,41 +232,48 @@ export const register: Register = (on, options) => {
 
     const prLine = (pr: PrView) => {
       const style = CHECK_STYLE[pr.checks]
+      const href = safeHref(pr.url)
       return (
         <Box paddingLeft={2}>
           <Text color={style.color} dimColor={pr.checks === 'none'}>{style.icon} </Text>
-          <Text dimColor>#{pr.number} </Text>
-          <Text wrap="truncate-end">{pr.title}</Text>
+          <Text dimColor>{linked(href, `#${pr.number}`)} </Text>
+          <Text wrap="truncate-end">{linked(href, pr.title)}</Text>
           {pr.isDraft && <Text dimColor> draft</Text>}
           {pr.hasConflict && <Text color="red"> conflicts</Text>}
         </Box>
       )
     }
 
-    const repoRow = (r: RepoView) => (
-      <Box flexDirection="column" marginBottom={1}>
-        <Box flexWrap="wrap" columnGap={2}>
-          <Text bold>{r.name.slice(0, nameWidth - 2).padEnd(nameWidth - 2)}</Text>
-          {stepper(r.steps)}
-        </Box>
-        <Box paddingLeft={2}>
-          <Text color={r.isInfra ? 'yellow' : LEVEL_COLOR[r.level]}>{r.headline}</Text>
-          <Text dimColor> · pushed {since(r.pushedAt)}</Text>
-        </Box>
-        {r.activity.map(line => (
-          <Box paddingLeft={2}>
-            <Text color="yellow">▸ </Text>
-            <Text dimColor>{line}</Text>
+    const repoRow = (r: RepoView) => {
+      const shown = r.name.slice(0, nameWidth - 2)
+      return (
+        <Box flexDirection="column" marginBottom={1}>
+          <Box flexWrap="wrap" columnGap={2}>
+            <Text bold>
+              {linked(safeHref(r.url), shown)}
+              {' '.repeat(nameWidth - 2 - shown.length)}
+            </Text>
+            {stepper(r.steps, stepLinks(r))}
           </Box>
-        ))}
-        {r.prs.slice(0, MAX_PRS_SHOWN).map(prLine)}
-        {r.prs.length > MAX_PRS_SHOWN && (
           <Box paddingLeft={2}>
-            <Text dimColor>+{r.prs.length - MAX_PRS_SHOWN} more open PRs</Text>
+            <Text color={r.isInfra ? 'yellow' : LEVEL_COLOR[r.level]}>{linked(headlineLink(r), r.headline)}</Text>
+            <Text dimColor> · pushed {since(r.pushedAt)}</Text>
           </Box>
-        )}
-      </Box>
-    )
+          {r.activity.map(run => (
+            <Box paddingLeft={2}>
+              <Text color="yellow">▸ </Text>
+              <Text dimColor>{linked(safeHref(run.url), run.text)}</Text>
+            </Box>
+          ))}
+          {r.prs.slice(0, MAX_PRS_SHOWN).map(prLine)}
+          {r.prs.length > MAX_PRS_SHOWN && (
+            <Box paddingLeft={2}>
+              <Text dimColor>+{r.prs.length - MAX_PRS_SHOWN} more open PRs</Text>
+            </Box>
+          )}
+        </Box>
+      )
+    }
 
     return (
       <Box flexDirection="column">
