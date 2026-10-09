@@ -53,8 +53,43 @@ export type Board = {
   source: 'gh' | 'token' | null
 }
 
+/** A merged PR boiled down for the stats: per actor (`You`, an AI's name, `Others`, `Automation`), its
+ * commits, lines added and lines removed. Kept in the store so a merged PR is fetched only once. */
+export type PrSummary = {
+  id: string
+  repo: string
+  mergedAt: string
+  by: Record<string, [commits: number, additions: number, deletions: number]>
+}
+
+export type RepoCreated = { name: string; createdAt: string; isArchived: boolean; isFork: boolean }
+
+export type StatsBoard = {
+  /** Days back the view covers. */
+  range: 7 | 30 | 90 | 365
+  /** `combined`: You against all AI together. `separate`: You against each AI. */
+  mode: 'combined' | 'separate'
+  /** AIs switched off, so the view compares You against only the rest. */
+  hidden: string[]
+  prs: PrSummary[]
+  repos: RepoCreated[]
+  /** The merged-PR history held, as ISO dates: everything merged from `coveredFrom` to `coveredThrough`. */
+  coveredFrom: string
+  coveredThrough: string
+  /** The signed-in account, whose commits are `You`. */
+  you: string
+  isLoading: boolean
+  /** What the loader is doing right now, e.g. `Loading PRs 3 of 11`. */
+  progress: string
+  error: string | null
+  updatedAt: number
+}
+
+/** Which of the pane's two views is showing. */
+export type ViewName = 'dashboard' | 'stats'
+
 declare module 'claude-code' {
   interface PluginState {
-    'shipwatch': { board: Board; showStale: boolean }
+    'shipwatch': { board: Board; showStale: boolean; view: ViewName; stats: StatsBoard }
   }
 }

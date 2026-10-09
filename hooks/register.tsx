@@ -1,10 +1,29 @@
 import { atom, read, update } from 'claude-code'
 import type { Register } from 'claude-code'
 
-import type { Board, Checks, Level, PrView, RepoView, StepState } from '../types'
+import type { Board, Checks, Level, PrView, RepoView, StatsBoard, StepState, ViewName } from '../types'
 import { analyze, ago, byUrgency, failedOnMain, fixPrompt, markInfra, snapshot, transitions } from './analyze'
 import type { Seen } from './analyze'
 import { connect, fetchActivity, fetchInfraFailure, fetchRepos, resolveOwner } from './github'
+import { fetchMergedPrs, fetchReposCreated, fetchViewerLogin } from './statsFetch'
+import {
+  ALL_AI,
+  AUTOMATION,
+  MIXED,
+  OTHERS,
+  RANGES,
+  YOU,
+  aggregate,
+  aisIn,
+  barCells,
+  compact,
+  dateOf,
+  mergeById,
+  planFetch,
+  reposCreatedSince,
+  sinceFor,
+  summarizePr,
+} from './stats'
 import type { Access, IO } from './github'
 import { headlineLink, safeHref, stepLinks } from './links'
 import type { StepLinks } from './links'
@@ -23,6 +42,28 @@ const MAX_ACTIVITY_LOOKUPS = 8
 const INITIAL: Board = { owner: '', repos: [], updatedAt: 0, isLoading: false, error: null, source: null }
 const board = atom({ plugin: 'shipwatch', key: 'board' } as const, INITIAL)
 const showStale = atom({ plugin: 'shipwatch', key: 'showStale' } as const, false)
+const view = atom({ plugin: 'shipwatch', key: 'view' } as const, 'dashboard' as ViewName)
+const INITIAL_STATS: StatsBoard = {
+  range: 30,
+  mode: 'combined',
+  hidden: [],
+  prs: [],
+  repos: [],
+  coveredFrom: '',
+  coveredThrough: '',
+  you: '',
+  isLoading: false,
+  progress: '',
+  error: null,
+  updatedAt: 0,
+}
+const stats = atom({ plugin: 'shipwatch', key: 'stats' } as const, INITIAL_STATS)
+/** Bump when what a stored PR summary holds changes, so old ones are fetched again. */
+const STATS_VERSION = 1
+/** Stats younger than this are not fetched again just because the view was opened. */
+const STATS_FRESH_MS = 10 * 60_000
+/** Merged PRs older than this are dropped from the store: the longest range is a year. */
+const STATS_KEEP_DAYS = 400
 
 const STEP_STYLE: Record<StepState, { icon: string; color?: string }> = {
   done: { icon: '●', color: 'green' },
@@ -59,6 +100,7 @@ type Config = {
   staleMs: number
   autoFix: boolean
   autoFixLimit: number
+  aiNames: string[]
   ignore: Set<string>
 }
 
@@ -72,6 +114,7 @@ const infraVerdicts = new Map<string, { isInfra: boolean; at: number }>()
 /** `repo:commit` pairs already sent for fixing, and how many prompts this load has sent. */
 const prompted = new Set<string>()
 let promptCount = 0
+let isLoadingStats = false
 let timer: { cancel: () => void } | undefined
 
 async function refresh($: any): Promise<number> {
@@ -154,9 +197,93 @@ async function refresh($: any): Promise<number> {
   return delay
 }
 
+/**
+ * Brings the merged-PR history up to date for the chosen range and reads the repos' creation dates. What
+ * is already held (from this session, or the store from earlier ones) is not fetched again: only the
+ * days before it, if the range reaches further back, and the days since. Merged PRs never change, so
+ * each is looked up once.
+ */
+async function loadStats($: any, force = false): Promise<void> {
+  if (isLoadingStats) return
+  isLoadingStats = true
+  const io: IO = {
+    run: (argv, init) => $.process.run(argv, init),
+    fetch: (url, init) => $.http.fetch(url, init),
+  }
+  const signature = `${STATS_VERSION}:${cfg.aiNames.join(',')}`
+  try {
+    access ??= await connect(io, cfg.token)
+    resolvedOwner ||= await resolveOwner(io, access, cfg.owner)
+    const owner = resolvedOwner
+    const storeKey = `shipwatch.stats:${owner}`
+    let s = await read($, stats)
+    if (s.prs.length === 0 && !s.coveredFrom) {
+      const saved = (await $.store.get(storeKey)) as (Partial<StatsBoard> & { signature?: string }) | undefined
+      if (saved && saved.signature === signature && Array.isArray(saved.prs)) {
+        await update($, stats, x => ({
+          ...x,
+          prs: saved.prs ?? [],
+          repos: saved.repos ?? [],
+          coveredFrom: saved.coveredFrom ?? '',
+          coveredThrough: saved.coveredThrough ?? '',
+          you: saved.you ?? '',
+        }))
+        s = await read($, stats)
+      }
+    }
+    const now: number = await $.clock.now()
+    const wantFrom = dateOf(sinceFor(s.range, now))
+    if (!force && s.updatedAt && now - s.updatedAt < STATS_FRESH_MS && s.coveredFrom && s.coveredFrom <= wantFrom) return
+
+    await update($, stats, x => ({ ...x, isLoading: true, error: null, progress: 'Starting...' }))
+    const you = s.you || (await fetchViewerLogin(io, access))
+    const plan = planFetch(s.coveredFrom, s.coveredThrough, now, sinceFor(s.range, now))
+    let prs = s.prs
+    for (let i = 0; i < plan.windows.length; i++) {
+      const w = plan.windows[i]!
+      const raw = await fetchMergedPrs(io, access, owner, w.from, w.to, (loaded, total) => {
+        void update($, stats, x => ({
+          ...x,
+          progress: `Loading merged PRs ${w.from} to ${w.to}: ${loaded} of ${total} (part ${i + 1} of ${plan.windows.length})`,
+        }))
+      })
+      prs = mergeById(prs, raw.map(r => summarizePr(r, you, cfg.aiNames)))
+      await update($, stats, x => ({ ...x, prs, you }))
+    }
+    const repos = await fetchReposCreated(io, access, owner)
+    const keepFrom = now - STATS_KEEP_DAYS * 86_400_000
+    prs = prs.filter(p => Date.parse(p.mergedAt) >= keepFrom)
+    const done = {
+      prs,
+      repos,
+      you,
+      coveredFrom: plan.coveredFrom,
+      coveredThrough: plan.coveredThrough,
+    }
+    await update($, stats, x => ({ ...x, ...done, isLoading: false, progress: '', error: null, updatedAt: now }))
+    await $.store.set(storeKey, { ...done, signature })
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    await update($, stats, x => ({ ...x, isLoading: false, progress: '', error: message }))
+  } finally {
+    isLoadingStats = false
+  }
+}
+
 function loop($: any, wait: number): void {
   timer?.cancel()
   timer = $.clock.after(wait, async () => loop($, await refresh($)))
+}
+
+const AI_COLORS = ['magenta', 'blue', 'yellow', 'cyan', 'red']
+
+/** The colour an actor is drawn in: You green, each AI its own, everyone else dim. */
+const colorOf = (actor: string, ais: readonly string[]): string | undefined => {
+  if (actor === YOU) return 'green'
+  if (actor === ALL_AI) return 'magenta'
+  if (actor === OTHERS || actor === AUTOMATION || actor === MIXED) return undefined
+  const i = ais.indexOf(actor)
+  return AI_COLORS[(i < 0 ? 0 : i) % AI_COLORS.length]
 }
 
 export const register: Register = (on, options) => {
@@ -169,6 +296,10 @@ export const register: Register = (on, options) => {
     staleMs: Math.max(1, num(options.staleDays, 14)) * 86_400_000,
     autoFix: options.autoFix === true,
     autoFixLimit: Math.max(0, Math.round(num(options.autoFixLimit, 5))),
+    aiNames: str(options.aiNames)
+      .split(',')
+      .map(s => s.trim())
+      .filter(Boolean),
     ignore: new Set(
       str(options.ignoreRepos)
         .split(',')
@@ -281,10 +412,224 @@ export const register: Register = (on, options) => {
       )
     }
 
+    const s = await read($, stats)
+    const currentView = await read($, view)
+
+    const viewTabs = (
+      <Box columnGap={1}>
+        <Button
+          key="view-dashboard"
+          hotkey="d"
+          label="Dashboard"
+          variant={currentView === 'dashboard' ? 'primary' : 'secondary'}
+          onPress={() => void update($, view, () => 'dashboard' as ViewName)}
+        />
+        <Button
+          key="view-stats"
+          hotkey="t"
+          label="Stats"
+          variant={currentView === 'stats' ? 'primary' : 'secondary'}
+          onPress={() => {
+            void update($, view, () => 'stats' as ViewName)
+            void loadStats($)
+          }}
+        />
+      </Box>
+    )
+
+    /** The Stats view: who the shipped work is attributed to, by PR, commit and line, over a chosen range. */
+    const statsTree = () => {
+      const sinceMs = sinceFor(s.range, now)
+      const agg = aggregate(s.prs, sinceMs, s.mode, s.hidden)
+      const ais = aisIn(s.prs)
+      const created = reposCreatedSince(s.repos, sinceMs)
+      const sum = (pick: (a: (typeof agg.actors)[number]) => number) => agg.actors.reduce((n, a) => n + pick(a), 0)
+      const totalCommits = sum(a => a.commits)
+      const barWidth = Math.max(10, Math.min(36, columns - 50))
+      const nameWidth = Math.max(6, ...agg.actors.map(a => a.actor.length)) + 1
+      const owner = b.owner || s.you
+
+      const stacked = (parts: Array<{ actor: string; value: number }>, width: number) => {
+        const cells = barCells(
+          parts.map(p => p.value),
+          width,
+        )
+        return (
+          <Box>
+            {parts.map((p, i) => (
+              <Text color={colorOf(p.actor, ais)} dimColor={colorOf(p.actor, ais) === undefined}>
+                {'█'.repeat(cells[i]!)}
+              </Text>
+            ))}
+          </Box>
+        )
+      }
+
+      return (
+        <Box flexDirection="column">
+          <Box columnGap={2} marginBottom={1} flexWrap="wrap">
+            <Text bold>{owner || 'GitHub'}</Text>
+            {viewTabs}
+            <Button
+              key="stats-refresh"
+              hotkey="r"
+              label={s.isLoading ? 'Loading...' : 'Refresh'}
+              onPress={() => void loadStats($, true)}
+            />
+          </Box>
+          <Box columnGap={1} marginBottom={1} flexWrap="wrap">
+            {RANGES.map((d, i) => (
+              <Button
+                key={`range-${d}`}
+                hotkey={String(i + 1)}
+                label={d === 365 ? 'Last year' : `${d} days`}
+                variant={s.range === d ? 'primary' : 'secondary'}
+                onPress={() => {
+                  void update($, stats, x => ({ ...x, range: d }))
+                  void loadStats($)
+                }}
+              />
+            ))}
+          </Box>
+          <Box columnGap={1} marginBottom={1} flexWrap="wrap">
+            <Button
+              key="stats-mode"
+              hotkey="m"
+              label={s.mode === 'combined' ? 'You vs all AI' : 'You vs each AI'}
+              onPress={() => void update($, stats, x => ({ ...x, mode: x.mode === 'combined' ? 'separate' : 'combined' }))}
+            />
+            {ais.map(ai => (
+              <Button
+                key={`ai-${ai}`}
+                label={`${s.hidden.includes(ai) ? '○' : '●'} ${ai}`}
+                onPress={() =>
+                  void update($, stats, x => ({ ...x, hidden: x.hidden.includes(ai) ? x.hidden.filter(h => h !== ai) : [...x.hidden, ai] }))
+                }
+              />
+            ))}
+          </Box>
+          {s.isLoading && (
+            <Box marginBottom={1}>
+              <Text color="yellow" wrap="wrap">{s.progress || 'Loading...'}</Text>
+            </Box>
+          )}
+          {s.error && (
+            <Box marginBottom={1}>
+              <Text color="red" wrap="wrap">{s.error}</Text>
+            </Box>
+          )}
+          {!s.isLoading && s.prs.length === 0 && !s.error && <Text dimColor>Nothing loaded yet.</Text>}
+
+          <Box columnGap={3} marginBottom={1} flexWrap="wrap">
+            <Text>
+              <Text bold>{agg.prs}</Text> <Text dimColor>PRs merged</Text>
+            </Text>
+            <Text>
+              <Text bold>{compact(totalCommits)}</Text> <Text dimColor>commits</Text>
+            </Text>
+            <Text>
+              <Text color="green">+{compact(sum(a => a.adds))}</Text> <Text color="red">−{compact(sum(a => a.dels))}</Text>{' '}
+              <Text dimColor>lines changed</Text>
+            </Text>
+            <Text>
+              <Text bold>{created.length}</Text> <Text dimColor>repos created</Text>
+            </Text>
+          </Box>
+
+          <Text bold>Who wrote it</Text>
+          {agg.actors.map(a => {
+            const share = totalCommits ? Math.round((a.commits / totalCommits) * 100) : 0
+            const mine = barCells([a.commits, Math.max(0, totalCommits - a.commits)], barWidth)[0] ?? 0
+            return (
+              <Box columnGap={1}>
+                <Text color={colorOf(a.actor, ais)} bold>
+                  {a.actor.padEnd(nameWidth)}
+                </Text>
+                <Text color={colorOf(a.actor, ais)}>{'█'.repeat(mine)}</Text>
+                <Text dimColor>{'░'.repeat(barWidth - mine)}</Text>
+                <Text>{String(share).padStart(3)}%</Text>
+                <Text dimColor>
+                  {compact(a.commits)} commits · +{compact(a.adds)} −{compact(a.dels)} · {a.prs} PR{a.prs === 1 ? '' : 's'}
+                </Text>
+              </Box>
+            )
+          })}
+          {agg.mixed > 0 && (
+            <Text dimColor>
+              {agg.mixed} PR{agg.mixed === 1 ? ' has' : 's have'} commits from more than one of the above.
+            </Text>
+          )}
+          <Text dimColor wrap="wrap">
+            Attributed by each commit's author and Co-Authored-By lines, not by who typed the code. Lines are added and removed in
+            commits, so a commit that rewrites an earlier one counts again.
+          </Text>
+
+          {agg.repos.length > 0 && (
+            <Box flexDirection="column" marginTop={1}>
+              <Text bold>By repo</Text>
+              {agg.repos.slice(0, 10).map(r => (
+                <Box columnGap={1}>
+                  <Text>{r.repo.slice(0, 22).padEnd(22)}</Text>
+                  {stacked(
+                    r.actors.map(a => ({ actor: a.actor, value: a.commits })),
+                    Math.max(8, Math.min(30, barWidth)),
+                  )}
+                  <Text dimColor>{r.prs} PR{r.prs === 1 ? '' : 's'}</Text>
+                </Box>
+              ))}
+              {agg.repos.length > 10 && <Text dimColor>+{agg.repos.length - 10} more repos</Text>}
+            </Box>
+          )}
+
+          {agg.weeks.length > 0 && (
+            <Box flexDirection="column" marginTop={1}>
+              <Text bold>By week (PRs merged)</Text>
+              {agg.weeks.slice(-12).map(w => {
+                const entries = Object.entries(w.prs).sort(([x], [y]) => (x === YOU ? -1 : y === YOU ? 1 : 0))
+                const peak = Math.max(...agg.weeks.slice(-12).map(k => Object.values(k.prs).reduce((a, c) => a + c, 0)))
+                const total = entries.reduce((n, [, c]) => n + c, 0)
+                const width = Math.max(1, Math.round((total / peak) * Math.max(8, Math.min(30, barWidth))))
+                return (
+                  <Box columnGap={1}>
+                    <Text dimColor>{w.start.slice(5)}</Text>
+                    {stacked(
+                      entries.map(([actor, value]) => ({ actor, value })),
+                      width,
+                    )}
+                    <Text dimColor>{total}</Text>
+                  </Box>
+                )
+              })}
+            </Box>
+          )}
+
+          {created.length > 0 && (
+            <Box flexDirection="column" marginTop={1}>
+              <Text bold>Repos created</Text>
+              <Text dimColor wrap="wrap">
+                {created
+                  .slice(0, 20)
+                  .map(r => `${r.name} (${r.createdAt.slice(0, 10)})${r.isArchived ? ' archived' : ''}`)
+                  .join(' · ')}
+                {created.length > 20 ? ` · +${created.length - 20} more` : ''}
+              </Text>
+            </Box>
+          )}
+          {s.updatedAt > 0 && (
+            <Box marginTop={1}>
+              <Text dimColor>updated {since(new Date(s.updatedAt).toISOString())}</Text>
+            </Box>
+          )}
+        </Box>
+      )
+    }
+    if (currentView === 'stats') return statsTree()
+
     return (
       <Box flexDirection="column">
         <Box columnGap={2} marginBottom={1}>
           <Text bold>{b.owner || 'GitHub'}</Text>
+          {viewTabs}
           <Text dimColor>
             {b.updatedAt ? `updated ${since(new Date(b.updatedAt).toISOString())}` : 'loading…'}
             {b.source ? ` · via ${b.source}` : ''}

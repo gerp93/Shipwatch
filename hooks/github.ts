@@ -63,7 +63,7 @@ export const connect = async (io: IO, token: string): Promise<Access> => {
   throw new Error('Cannot reach GitHub: install and sign in to the gh CLI (`gh auth login`), or set the githubToken option.')
 }
 
-const graphql = async (io: IO, access: Access, query: string, vars: Record<string, string | number | boolean | null>) => {
+export const graphql = async (io: IO, access: Access, query: string, vars: Record<string, string | number | boolean | null>) => {
   if (access.source === 'gh') {
     const argv = ['gh', 'api', 'graphql', '-f', `query=${query}`]
     for (const [k, v] of Object.entries(vars)) {
