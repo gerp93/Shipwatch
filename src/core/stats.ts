@@ -1,4 +1,4 @@
-import type { PrSummary, RepoCreated } from '../types'
+import type { PrSummary, RepoCreated, StatsMode } from './types'
 
 // ---- Who a commit is attributed to ---------------------------------------------------------------
 //
@@ -101,8 +101,6 @@ export const summarizePr = (raw: RawMergedPr, you: string, extra: readonly strin
 }
 
 // ---- Totals for a range and a choice of who to compare -------------------------------------------
-
-export type StatsMode = 'combined' | 'separate'
 
 export type Totals = { prs: number; commits: number; adds: number; dels: number }
 

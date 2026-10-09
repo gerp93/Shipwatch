@@ -1,4 +1,4 @@
-import type { RepoView } from '../types'
+import type { RepoView } from './types'
 
 // A `Link` whose href the engine rejects makes it refuse the whole pane, so every
 // URL goes through safeHref first and an unusable one just renders unlinked.

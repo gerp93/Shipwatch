@@ -1,22 +1,6 @@
 import { isInfraMessage } from './analyze'
 import type { RawRepo } from './analyze'
-
-/**
- * How this file reaches the outside world. register.tsx fills it with
- * `$.process.run` and `$.http.fetch` so `$` never leaves that file.
- */
-export type IO = {
-  run: (
-    argv: readonly string[],
-    init?: { timeoutMs?: number },
-  ) => Promise<{ exitCode: number; stdout: string; stderr: string }>
-  fetch: (
-    url: string,
-    init?: { method?: string; headers?: Record<string, string>; body?: string },
-  ) => Promise<{ status: number; ok: boolean; text: string }>
-}
-
-export type Access = { source: 'gh' | 'token'; token: string }
+import type { Access, IO } from './ports'
 
 const QUERY = `
 query($owner:String!,$n:Int!,$fork:Boolean){

@@ -133,19 +133,30 @@ Archived repos are always skipped.
 ## Layout
 
 ```
+src/core/                    the logic, written once (see src/core/README.md): what each repo's
+                             state is, who commits are attributed to, what to fetch, the caching.
+                             Knows nothing about its host, so any front end can use it.
+hooks/register.tsx           the Claude pane: wires the core to the engine (process, HTTP, store,
+                             state) and paints it. The only place the engine's `$` appears.
 .claude-plugin/plugin.json   manifest and options
-hooks/register.tsx           pane, polling loop, command, toasts
-hooks/analyze.ts             pure logic: repo -> stepper position, transitions
-hooks/github.ts              GitHub access through injected gh/HTTP callbacks
-types/index.d.ts             the shape of the board kept in session state
+types/index.d.ts             the engine's state contract; GENERATED from src/core/types.ts
+scripts/sync-contract.mjs    writes (or --check verifies) that file
 ```
+
+The split is deliberate: Shipwatch is meant to have more than one outlet (the pane today; a web
+report or an app would share `src/core` unchanged). Logic belongs in the core; a front end only
+supplies how to reach GitHub and how to draw.
 
 Check and test with:
 
 ```bash
 claude plugin validate .
 claude plugin test .
+node scripts/sync-contract.mjs --check                          # contract matches the core's types
+npx -p typescript tsc --noEmit -p src/core/tsconfig.json        # the core stays pure
 ```
+
+The last two run in CI too (`.github/workflows/checks.yml`).
 
 ## Limits
 

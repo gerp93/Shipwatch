@@ -1,6 +1,6 @@
-import type { RepoCreated } from '../types'
+import type { RepoCreated } from './types'
 import { graphql } from './github'
-import type { Access, IO } from './github'
+import type { Access, IO } from './ports'
 import type { RawMergedPr } from './stats'
 
 // Merged PRs, with the identity and size of each commit. GitHub's search returns at most 1000 results

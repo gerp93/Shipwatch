@@ -1,11 +1,14 @@
 import { atom, read, update } from 'claude-code'
 import type { Register } from 'claude-code'
 
-import type { Board, Checks, Level, PrView, RepoView, StatsBoard, StepState, ViewName } from '../types'
-import { analyze, ago, byUrgency, failedOnMain, fixPrompt, markInfra, snapshot, transitions } from './analyze'
-import type { Seen } from './analyze'
-import { connect, fetchActivity, fetchInfraFailure, fetchRepos, resolveOwner } from './github'
-import { fetchMergedPrs, fetchReposCreated, fetchViewerLogin } from './statsFetch'
+import { ago, failedOnMain, fixPrompt, snapshot, transitions } from '../src/core/analyze'
+import type { Seen } from '../src/core/analyze'
+import { buildBoard } from '../src/core/boardService'
+import type { InfraVerdicts } from '../src/core/boardService'
+import { connect, resolveOwner } from '../src/core/github'
+import { headlineLink, safeHref, stepLinks } from '../src/core/links'
+import type { StepLinks } from '../src/core/links'
+import type { Access, IO, Store } from '../src/core/ports'
 import {
   ALL_AI,
   AUTOMATION,
@@ -17,27 +20,18 @@ import {
   aisIn,
   barCells,
   compact,
-  dateOf,
-  mergeById,
-  planFetch,
   reposCreatedSince,
   sinceFor,
-  summarizePr,
-} from './stats'
-import type { Access, IO } from './github'
-import { headlineLink, safeHref, stepLinks } from './links'
-import type { StepLinks } from './links'
+} from '../src/core/stats'
+import { loadStatsCache, refreshStats, statsAreFresh } from '../src/core/statsService'
+import type { Board, Checks, Level, PrView, RepoView, StatsBoard, StatsMode, StepState } from '../src/core/types'
+import type { ViewName } from '../types'
 
 const PANE = 'shipwatch'
 const STEP_LABELS = ['PR', 'Build', 'Merged', 'Released'] as const
-/** A missing release this soon after a merge reads as "awaiting", later as "not every commit ships". */
-const RECENT_MS = 6 * 60 * 60 * 1000
 const ACTIVE_POLL_MS = 20_000
 const ERROR_POLL_MS = 60_000
-/** How long a runner-outage verdict for a commit is trusted: a re-run can change it. */
-const INFRA_TTL_MS = 5 * 60_000
 const MAX_PRS_SHOWN = 3
-const MAX_ACTIVITY_LOOKUPS = 8
 
 const INITIAL: Board = { owner: '', repos: [], updatedAt: 0, isLoading: false, error: null, source: null }
 const board = atom({ plugin: 'shipwatch', key: 'board' } as const, INITIAL)
@@ -58,12 +52,6 @@ const INITIAL_STATS: StatsBoard = {
   updatedAt: 0,
 }
 const stats = atom({ plugin: 'shipwatch', key: 'stats' } as const, INITIAL_STATS)
-/** Bump when what a stored PR summary holds changes, so old ones are fetched again. */
-const STATS_VERSION = 1
-/** Stats younger than this are not fetched again just because the view was opened. */
-const STATS_FRESH_MS = 10 * 60_000
-/** Merged PRs older than this are dropped from the store: the longest range is a year. */
-const STATS_KEEP_DAYS = 400
 
 const STEP_STYLE: Record<StepState, { icon: string; color?: string }> = {
   done: { icon: '●', color: 'green' },
@@ -110,7 +98,7 @@ let seen: Seen = {}
 let access: Access | undefined
 let resolvedOwner = ''
 let isPolling = false
-const infraVerdicts = new Map<string, { isInfra: boolean; at: number }>()
+const infraVerdicts: InfraVerdicts = new Map()
 /** `repo:commit` pairs already sent for fixing, and how many prompts this load has sent. */
 const prompted = new Set<string>()
 let promptCount = 0
@@ -129,38 +117,14 @@ async function refresh($: any): Promise<number> {
   try {
     access ??= await connect(io, cfg.token)
     resolvedOwner ||= await resolveOwner(io, access, cfg.owner)
-    const raw = await fetchRepos(io, access, resolvedOwner, cfg.count, cfg.includeForks)
     const now: number = await $.clock.now()
-    const repos = raw
-      .filter(r => !r.isArchived && !cfg.ignore.has(r.name.toLowerCase()))
-      .map(r => analyze(r, now, RECENT_MS, cfg.staleMs))
-      .sort(byUrgency)
-
-    for (let i = 0; i < repos.length; i++) {
-      const r = repos[i]!
-      if (r.level !== 'fail' || r.headline !== 'main build failing' || r.isStale) continue
-      const key = `${r.name}:${r.headOid}`
-      let verdict = infraVerdicts.get(key)
-      if (!verdict || now - verdict.at > INFRA_TTL_MS) {
-        let isInfra = false
-        try {
-          isInfra = await fetchInfraFailure(io, access, resolvedOwner, r.name, r.headOid)
-        } catch {
-          // Can't tell: treat it as the code's failure rather than hide it.
-        }
-        verdict = { isInfra, at: now }
-        infraVerdicts.set(key, verdict)
-      }
-      repos[i] = markInfra(r, verdict.isInfra)
-    }
-
-    for (const r of repos.filter(r => r.level === 'running').slice(0, MAX_ACTIVITY_LOOKUPS)) {
-      try {
-        r.activity = await fetchActivity(io, access, resolvedOwner, r.name)
-      } catch {
-        // The headline already says it is building; run names are a bonus.
-      }
-    }
+    const repos = await buildBoard(
+      io,
+      access,
+      { owner: resolvedOwner, count: cfg.count, includeForks: cfg.includeForks, ignore: cfg.ignore, staleMs: cfg.staleMs },
+      now,
+      infraVerdicts,
+    )
 
     for (const line of transitions(seen, repos)) $.ui.toast(line)
     if (cfg.autoFix) {
@@ -198,10 +162,9 @@ async function refresh($: any): Promise<number> {
 }
 
 /**
- * Brings the merged-PR history up to date for the chosen range and reads the repos' creation dates. What
- * is already held (from this session, or the store from earlier ones) is not fetched again: only the
- * days before it, if the range reaches further back, and the days since. Merged PRs never change, so
- * each is looked up once.
+ * Brings the Stats view up to date (see `refreshStats` in the core, which does the work and keeps the
+ * history in the store). This only wires it to the pane: the engine's process, HTTP and store calls in,
+ * progress and results out to `$.state`.
  */
 async function loadStats($: any, force = false): Promise<void> {
   if (isLoadingStats) return
@@ -210,58 +173,41 @@ async function loadStats($: any, force = false): Promise<void> {
     run: (argv, init) => $.process.run(argv, init),
     fetch: (url, init) => $.http.fetch(url, init),
   }
-  const signature = `${STATS_VERSION}:${cfg.aiNames.join(',')}`
+  const store: Store = {
+    get: key => $.store.get(key),
+    set: (key, value) => $.store.set(key, value),
+  }
   try {
     access ??= await connect(io, cfg.token)
     resolvedOwner ||= await resolveOwner(io, access, cfg.owner)
     const owner = resolvedOwner
-    const storeKey = `shipwatch.stats:${owner}`
     let s = await read($, stats)
     if (s.prs.length === 0 && !s.coveredFrom) {
-      const saved = (await $.store.get(storeKey)) as (Partial<StatsBoard> & { signature?: string }) | undefined
-      if (saved && saved.signature === signature && Array.isArray(saved.prs)) {
-        await update($, stats, x => ({
-          ...x,
-          prs: saved.prs ?? [],
-          repos: saved.repos ?? [],
-          coveredFrom: saved.coveredFrom ?? '',
-          coveredThrough: saved.coveredThrough ?? '',
-          you: saved.you ?? '',
-        }))
+      const saved = await loadStatsCache(store, owner, cfg.aiNames)
+      if (saved) {
+        await update($, stats, x => ({ ...x, ...saved }))
         s = await read($, stats)
       }
     }
     const now: number = await $.clock.now()
-    const wantFrom = dateOf(sinceFor(s.range, now))
-    if (!force && s.updatedAt && now - s.updatedAt < STATS_FRESH_MS && s.coveredFrom && s.coveredFrom <= wantFrom) return
+    if (!force && statsAreFresh(s, now)) return
 
     await update($, stats, x => ({ ...x, isLoading: true, error: null, progress: 'Starting...' }))
-    const you = s.you || (await fetchViewerLogin(io, access))
-    const plan = planFetch(s.coveredFrom, s.coveredThrough, now, sinceFor(s.range, now))
-    let prs = s.prs
-    for (let i = 0; i < plan.windows.length; i++) {
-      const w = plan.windows[i]!
-      const raw = await fetchMergedPrs(io, access, owner, w.from, w.to, (loaded, total) => {
-        void update($, stats, x => ({
-          ...x,
-          progress: `Loading merged PRs ${w.from} to ${w.to}: ${loaded} of ${total} (part ${i + 1} of ${plan.windows.length})`,
-        }))
-      })
-      prs = mergeById(prs, raw.map(r => summarizePr(r, you, cfg.aiNames)))
-      await update($, stats, x => ({ ...x, prs, you }))
-    }
-    const repos = await fetchReposCreated(io, access, owner)
-    const keepFrom = now - STATS_KEEP_DAYS * 86_400_000
-    prs = prs.filter(p => Date.parse(p.mergedAt) >= keepFrom)
-    const done = {
-      prs,
-      repos,
-      you,
-      coveredFrom: plan.coveredFrom,
-      coveredThrough: plan.coveredThrough,
-    }
+    const done = await refreshStats(
+      {
+        io,
+        access,
+        store,
+        owner,
+        aiNames: cfg.aiNames,
+        now,
+        // Written without waiting, so a late one must not land after the final state: only while loading.
+        onProgress: text => void update($, stats, x => (x.isLoading ? { ...x, progress: text } : x)),
+        onPartial: (prs, you) => void update($, stats, x => (x.isLoading ? { ...x, prs, you } : x)),
+      },
+      s,
+    )
     await update($, stats, x => ({ ...x, ...done, isLoading: false, progress: '', error: null, updatedAt: now }))
-    await $.store.set(storeKey, { ...done, signature })
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
     await update($, stats, x => ({ ...x, isLoading: false, progress: '', error: message }))
@@ -353,7 +299,7 @@ export const register: Register = (on, options) => {
           return (
             <Box>
               <Text color={style.color} dimColor={s === 'todo'} bold={s === 'running'}>
-                {style.icon} {linked(links[i], STEP_LABELS[i])}
+                {style.icon} {linked(links[i], STEP_LABELS[i] ?? '')}
               </Text>
               {i < steps.length - 1 && <Text dimColor> ─ </Text>}
             </Box>
@@ -496,7 +442,9 @@ export const register: Register = (on, options) => {
               key="stats-mode"
               hotkey="m"
               label={s.mode === 'combined' ? 'You vs all AI' : 'You vs each AI'}
-              onPress={() => void update($, stats, x => ({ ...x, mode: x.mode === 'combined' ? 'separate' : 'combined' }))}
+              onPress={() =>
+                void update($, stats, x => ({ ...x, mode: (x.mode === 'combined' ? 'separate' : 'combined') as StatsMode }))
+              }
             />
             {ais.map(ai => (
               <Button

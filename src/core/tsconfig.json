@@ -1,0 +1,17 @@
+{
+  // The core must run anywhere: the Claude mod engine, Node, a browser. So it is checked against the
+  // bare language only (no DOM, no Node, no engine types). A host API slipping in fails here.
+  "compilerOptions": {
+    "target": "es2023",
+    "lib": ["es2023"],
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "types": []
+  },
+  "include": ["./**/*.ts"],
+  "exclude": ["./**/*.test.ts"]
+}

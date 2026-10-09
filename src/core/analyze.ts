@@ -1,4 +1,4 @@
-import type { Checks, Level, PrView, RepoView, StepState } from '../types'
+import type { Checks, Level, PrView, RepoView, StepState } from './types'
 
 /** One check on a commit: a check run (`status`, `conclusion`) or a legacy commit status (`state`). */
 export type RawContext = { status?: string; conclusion?: string | null; state?: string } | null

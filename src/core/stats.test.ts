@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import type { PrSummary } from '../types'
+import type { PrSummary } from './types'
 import {
   ALL_AI,
   MIXED,
@@ -17,17 +17,18 @@ import {
   trailersOf,
   weekStart,
 } from './stats'
+import type { RawCommit } from './stats'
 
 const ME = 'gerp93'
-const commit = (over: Record<string, unknown> = {}) => ({
+const commit = (over: Record<string, unknown> = {}): RawCommit => ({
   message: 'Add a thing',
   additions: 10,
   deletions: 2,
   parents: { totalCount: 1 },
   author: { name: 'K', email: 'k@example.com', user: { login: ME } },
-  authors: { nodes: [] as unknown[] },
+  authors: { nodes: [] },
   ...over,
-})
+}) as RawCommit
 
 test('a commit is attributed by author identity or by a Co-Authored-By trailer', () => {
   expect(actorOf(commit(), ME)).toBe(YOU)
