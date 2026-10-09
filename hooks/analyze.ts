@@ -1,7 +1,10 @@
 import type { Checks, Level, PrView, RepoView, StepState } from '../types'
 
+/** One check on a commit: a check run (`status`, `conclusion`) or a legacy commit status (`state`). */
+export type RawContext = { status?: string; conclusion?: string | null; state?: string } | null
+
 /** The slice of GitHub's GraphQL answer this mod reads (see github.ts QUERY). */
-export type RawRollup = { state?: string } | null | undefined
+export type RawRollup = { state?: string; contexts?: { nodes?: RawContext[] } } | null | undefined
 
 export type RawPr = {
   number: number
@@ -30,7 +33,36 @@ export type RawRepo = {
 
 type Steps = RepoView['steps']
 
+const FAILED_CONCLUSIONS = new Set(['FAILURE', 'TIMED_OUT', 'ACTION_REQUIRED', 'STARTUP_FAILURE'])
+
+/**
+ * What a commit's checks add up to, read from the individual checks. GitHub's own combined state
+ * counts a CANCELLED run (one a newer push superseded) as a failure, and a SKIPPED one as nothing,
+ * so a commit whose runs were all cancelled reads FAILURE although nothing failed. Here cancelled
+ * and skipped runs say nothing: only a failed or timed-out check fails, only an unfinished one runs.
+ */
+const fromContexts = (nodes: RawContext[]): Checks => {
+  let failing = false
+  let running = false
+  let passing = false
+  for (const n of nodes) {
+    if (!n) continue
+    if (n.status !== undefined) {
+      if (n.status !== 'COMPLETED') running = true
+      else if (n.conclusion && FAILED_CONCLUSIONS.has(n.conclusion)) failing = true
+      else if (n.conclusion === 'SUCCESS' || n.conclusion === 'NEUTRAL') passing = true
+    } else if (n.state === 'FAILURE' || n.state === 'ERROR') failing = true
+    else if (n.state === 'PENDING' || n.state === 'EXPECTED') running = true
+    else if (n.state === 'SUCCESS') passing = true
+  }
+  if (failing) return 'failing'
+  if (running) return 'running'
+  return passing ? 'passing' : 'none'
+}
+
 export const checksOf = (rollup: RawRollup): Checks => {
+  const nodes = rollup?.contexts?.nodes
+  if (nodes && nodes.length > 0) return fromContexts(nodes)
   switch (rollup?.state) {
     case 'SUCCESS':
       return 'passing'
@@ -56,11 +88,13 @@ const prView = (pr: RawPr): PrView => ({
   updatedAt: pr.updatedAt,
 })
 
-/** Lower is more urgent; the PR that decides where the repo sits in the stepper. */
+/** Lower is more urgent; the PR that decides where the repo sits in the stepper. A draft is work in
+ * progress, so it never outranks a real PR however its checks look. */
 const weight = (pr: PrView): number => {
+  if (pr.isDraft) return 3
   if (pr.checks === 'failing' || pr.hasConflict) return 0
   if (pr.checks === 'running') return 1
-  return pr.isDraft ? 3 : 2
+  return 2
 }
 
 const steps = (...s: StepState[]): Steps => s as Steps
@@ -97,7 +131,8 @@ const classify = (raw: RawRepo, now: number, recentMs: number): RepoView => {
     isInfra: false,
   }
 
-  const pr = prs[0]
+  // Drafts come last; the stepper follows the first real PR, and only falls back to a draft below.
+  const pr = prs.find(p => !p.isDraft)
   if (pr) {
     const n = `#${pr.number}`
     if (pr.hasConflict) {
@@ -108,9 +143,6 @@ const classify = (raw: RawRepo, now: number, recentMs: number): RepoView => {
     }
     if (pr.checks === 'running') {
       return { ...base, steps: steps('done', 'running', 'todo', 'todo'), level: 'running', headline: `${n} building` }
-    }
-    if (pr.isDraft) {
-      return { ...base, steps: steps('done', 'todo', 'todo', 'todo'), level: 'pending', headline: `${n} draft` }
     }
     const built: StepState = pr.checks === 'passing' ? 'done' : 'todo'
     return {
@@ -124,6 +156,14 @@ const classify = (raw: RawRepo, now: number, recentMs: number): RepoView => {
   if (!target) {
     return { ...base, steps: steps('todo', 'todo', 'todo', 'todo'), level: 'idle', headline: 'no commits yet' }
   }
+  // Only drafts are open. They are still shown, but quietly: the default branch's own state matters more.
+  const draft = prs[0]
+  const draftView = (): RepoView => ({
+    ...base,
+    steps: steps('done', 'todo', 'todo', 'todo'),
+    level: 'draft',
+    headline: prs.length === 1 ? `#${draft!.number} draft` : `${prs.length} draft PRs`,
+  })
   if (headChecks === 'running') {
     return { ...base, steps: steps('done', 'done', 'done', 'running'), level: 'running', headline: 'building main' }
   }
@@ -131,13 +171,16 @@ const classify = (raw: RawRepo, now: number, recentMs: number): RepoView => {
     return { ...base, steps: steps('done', 'done', 'done', 'failed'), level: 'fail', headline: 'main build failing' }
   }
   if (!release) {
-    return { ...base, steps: steps('done', 'done', 'done', 'todo'), level: 'idle', headline: 'no releases' }
+    return draft ? draftView() : { ...base, steps: steps('done', 'done', 'done', 'todo'), level: 'idle', headline: 'no releases' }
   }
   const isReleased = Date.parse(release.publishedAt) >= Date.parse(headDate)
   if (isReleased) {
-    return { ...base, steps: steps('done', 'done', 'done', 'done'), level: 'idle', headline: `up to date · ${release.tag}` }
+    return draft
+      ? draftView()
+      : { ...base, steps: steps('done', 'done', 'done', 'done'), level: 'idle', headline: `up to date · ${release.tag}` }
   }
   const isRecent = now - Date.parse(headDate) < recentMs
+  if (!isRecent && draft) return draftView()
   return {
     ...base,
     steps: steps('done', 'done', 'done', isRecent ? 'running' : 'todo'),
@@ -162,7 +205,7 @@ export const analyze = (raw: RawRepo, now: number, recentMs: number, staleMs: nu
   return { ...view, isStale: view.level !== 'running' && now - touched > staleMs }
 }
 
-const URGENCY: Record<Level, number> = { fail: 0, running: 1, ready: 2, pending: 3, idle: 4 }
+const URGENCY: Record<Level, number> = { fail: 0, running: 1, ready: 2, pending: 3, draft: 4, idle: 5 }
 
 /** Attention first; within a level, most recently pushed first. */
 export const byUrgency = (a: RepoView, b: RepoView): number =>
@@ -196,7 +239,8 @@ export const transitions = (before: Seen, repos: readonly RepoView[]): string[] 
     const was = before[r.name]
     if (!was) continue
     settled(was.head, r.headChecks, `${r.name} main`)
-    for (const p of r.prs) settled(was.prs[p.number], p.checks, `${r.name} #${p.number}`)
+    // A draft's checks are no one's to-do, so they are not announced.
+    for (const p of r.prs) if (!p.isDraft) settled(was.prs[p.number], p.checks, `${r.name} #${p.number}`)
     if (was.tag && r.release && r.release.tag !== was.tag) {
       out.push(`⬆ ${r.name} ${r.release.tag} released — ready to download`)
     }

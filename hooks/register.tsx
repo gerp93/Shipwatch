@@ -43,6 +43,7 @@ const LEVEL_COLOR: Record<Level, string | undefined> = {
   running: 'yellow',
   ready: 'cyan',
   pending: 'yellow',
+  draft: undefined,
   idle: undefined,
 }
 
@@ -233,13 +234,16 @@ export const register: Register = (on, options) => {
     const prLine = (pr: PrView) => {
       const style = CHECK_STYLE[pr.checks]
       const href = safeHref(pr.url)
+      // A draft's whole line is quiet: its checks and conflicts are shown, but nothing is red.
+      const quiet = pr.isDraft
+      // Spacing comes from the Box's gap, not trailing spaces: the desktop pane trims a Text's trailing space.
       return (
-        <Box paddingLeft={2}>
-          <Text color={style.color} dimColor={pr.checks === 'none'}>{style.icon} </Text>
-          <Text dimColor>{linked(href, `#${pr.number}`)} </Text>
-          <Text wrap="truncate-end">{linked(href, pr.title)}</Text>
-          {pr.isDraft && <Text dimColor> draft</Text>}
-          {pr.hasConflict && <Text color="red"> conflicts</Text>}
+        <Box paddingLeft={2} columnGap={1}>
+          <Text color={quiet ? undefined : style.color} dimColor={quiet || pr.checks === 'none'}>{style.icon}</Text>
+          <Text dimColor>{linked(href, `#${pr.number}`)}</Text>
+          <Text wrap="truncate-end" dimColor={quiet}>{linked(href, pr.title)}</Text>
+          {pr.isDraft && <Text dimColor>draft</Text>}
+          {pr.hasConflict && <Text color={quiet ? undefined : 'red'} dimColor={quiet}>conflicts</Text>}
         </Box>
       )
     }
@@ -256,7 +260,9 @@ export const register: Register = (on, options) => {
             {stepper(r.steps, stepLinks(r))}
           </Box>
           <Box paddingLeft={2}>
-            <Text color={r.isInfra ? 'yellow' : LEVEL_COLOR[r.level]}>{linked(headlineLink(r), r.headline)}</Text>
+            <Text color={r.isInfra ? 'yellow' : LEVEL_COLOR[r.level]} dimColor={r.level === 'draft'}>
+              {linked(headlineLink(r), r.headline)}
+            </Text>
             <Text dimColor> · pushed {since(r.pushedAt)}</Text>
           </Box>
           {r.activity.map(run => (

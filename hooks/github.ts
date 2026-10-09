@@ -24,12 +24,12 @@ query($owner:String!,$n:Int!,$fork:Boolean){
     repositories(first:$n, isFork:$fork, orderBy:{field:PUSHED_AT,direction:DESC}){
       nodes{
         name isArchived isFork pushedAt url
-        defaultBranchRef{ name target{ ... on Commit{ oid committedDate statusCheckRollup{ state } } } }
+        defaultBranchRef{ name target{ ... on Commit{ oid committedDate statusCheckRollup{ state contexts(first:30){ nodes{ ... on CheckRun{ status conclusion } ... on StatusContext{ state } } } } } } }
         latestRelease{ tagName publishedAt }
         pullRequests(states:OPEN, first:10, orderBy:{field:UPDATED_AT,direction:DESC}){
           nodes{
             number title url isDraft headRefName updatedAt mergeable
-            commits(last:1){ nodes{ commit{ statusCheckRollup{ state } } } }
+            commits(last:1){ nodes{ commit{ statusCheckRollup{ state contexts(first:30){ nodes{ ... on CheckRun{ status conclusion } ... on StatusContext{ state } } } } } } }
           }
         }
       }

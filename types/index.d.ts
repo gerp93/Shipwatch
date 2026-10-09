@@ -4,7 +4,7 @@ export type Checks = 'passing' | 'running' | 'failing' | 'none'
 export type StepState = 'done' | 'running' | 'failed' | 'todo'
 
 /** How much attention a repo needs, most urgent first. */
-export type Level = 'fail' | 'running' | 'ready' | 'pending' | 'idle'
+export type Level = 'fail' | 'running' | 'ready' | 'pending' | 'draft' | 'idle'
 
 export type PrView = {
   number: number

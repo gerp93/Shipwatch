@@ -38,6 +38,16 @@ release. With several apps going at once it answers "which of these is waiting o
 With an open PR the stepper follows the most urgent one (conflicts or failing checks, then
 running, then ready). With none it follows the default branch.
 
+**Drafts are shown, quietly.** A draft PR never leads the stepper and never turns a repo red;
+its line is dimmed, and its checks are not announced. A repo whose only open PRs are drafts
+shows its default branch's state if that needs attention, and otherwise sits below the real work
+as "draft".
+
+**Cancelled and skipped runs are not failures.** GitHub's combined status counts a run that a
+newer push cancelled as a failure. Shipwatch reads the individual checks instead: only a failed
+or timed-out check fails, only an unfinished one is running, and a commit whose runs were all
+cancelled or skipped shows no build state.
+
 ### Links
 
 Most text in the pane is a link: the repo name, each stepper step, the headline, PR lines,
