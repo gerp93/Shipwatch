@@ -3,7 +3,8 @@
 
 import { buildBoard } from '../../src/core/boardService'
 import type { InfraVerdicts } from '../../src/core/boardService'
-import { connect, resolveOwner } from '../../src/core/github'
+import { isRateLimit, rateLimitMessage } from '../../src/core/budget'
+import { connect, fetchGraphqlReset, resolveOwner } from '../../src/core/github'
 import type { IO, Store } from '../../src/core/ports'
 import type { ReportData } from '../../src/core/report'
 import { ALL_TIME } from '../../src/core/stats'
@@ -53,22 +54,31 @@ export const collect = async (deps: CollectDeps): Promise<{ data: ReportData; st
   const { io, store, config, now } = deps
   deps.onProgress?.('Connecting to GitHub...')
   const access = await connect(io, config.token)
-  const owner = await resolveOwner(io, access, config.owner)
 
-  deps.onProgress?.('Reading repos...')
-  const repos = await buildBoard(
-    io,
-    access,
-    {
-      owner,
-      count: config.count,
-      includeForks: config.includeForks,
-      ignore: new Set(config.ignore.map(n => n.toLowerCase())),
-      staleMs: config.staleDays * DAY_MS,
-    },
-    now,
-    deps.infraVerdicts,
-  )
+  let owner: string
+  let repos: Awaited<ReturnType<typeof buildBoard>>
+  try {
+    owner = await resolveOwner(io, access, config.owner)
+    deps.onProgress?.('Reading repos...')
+    repos = await buildBoard(
+      io,
+      access,
+      {
+        owner,
+        count: config.count,
+        includeForks: config.includeForks,
+        ignore: new Set(config.ignore.map(n => n.toLowerCase())),
+        staleMs: config.staleDays * DAY_MS,
+      },
+      now,
+      deps.infraVerdicts,
+    )
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    // Say when GitHub's shared hourly allowance comes back, rather than only that it ran out.
+    if (isRateLimit(message)) throw new Error(rateLimitMessage(await fetchGraphqlReset(io, access), Date.now()))
+    throw err
+  }
 
   let stats: StatsBoard = { ...EMPTY_STATS }
   const saved = await loadStatsCache(store, owner, config.aiNames)

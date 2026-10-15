@@ -1,9 +1,11 @@
 import { isInfraMessage } from './analyze'
 import type { RawRepo } from './analyze'
+import type { Budget } from './budget'
 import type { Access, IO } from './ports'
 
 const QUERY = `
 query($owner:String!,$n:Int!,$fork:Boolean){
+  rateLimit{ cost remaining limit resetAt }
   repositoryOwner(login:$owner){
     repositories(first:$n, isFork:$fork, orderBy:{field:PUSHED_AT,direction:DESC}){
       nodes{
@@ -102,6 +104,7 @@ export const fetchRepos = async (
   owner: string,
   count: number,
   includeForks: boolean,
+  onBudget?: (budget: Budget) => void,
 ): Promise<RawRepo[]> => {
   const out = await graphql(io, access, QUERY, {
     owner,
@@ -111,9 +114,27 @@ export const fetchRepos = async (
   if (out?.errors?.length && !out?.data?.repositoryOwner) {
     throw new Error(out.errors[0].message ?? 'GitHub query failed')
   }
+  const rl = out?.data?.rateLimit
+  if (rl && typeof rl.remaining === 'number' && typeof rl.limit === 'number') {
+    onBudget?.({ cost: Number(rl.cost) || 1, remaining: rl.remaining, limit: rl.limit, resetAt: Date.parse(rl.resetAt) || 0 })
+  }
   const nodes: RawRepo[] | undefined = out?.data?.repositoryOwner?.repositories?.nodes
   if (!nodes) throw new Error(`No repositories found for ${owner}`)
   return nodes.filter(Boolean)
+}
+
+/**
+ * When the GraphQL allowance resets, epoch ms, or undefined if it cannot be told. This asks the REST
+ * `rate_limit` endpoint, which GitHub does not count against any allowance, so it works when GraphQL is spent.
+ */
+export const fetchGraphqlReset = async (io: IO, access: Access): Promise<number | undefined> => {
+  try {
+    const out = await rest(io, access, 'rate_limit')
+    const reset = out?.resources?.graphql?.reset
+    return typeof reset === 'number' ? reset * 1000 : undefined
+  } catch {
+    return undefined
+  }
 }
 
 /** The workflow runs in flight on a repo: `workflow · branch`, and the run's page. */
