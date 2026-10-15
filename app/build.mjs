@@ -14,5 +14,5 @@ if (process.argv.includes('--tests')) {
   await build({ ...common, entryPoints: tests, outdir: 'dist-test', outExtension: { '.js': '.spec.js' } })
 } else {
   // preload.js runs in the report page before its script (see src/preload.ts), so it is a bundle of its own.
-  await build({ ...common, entryPoints: { main: 'src/main.ts', preload: 'src/preload.ts' }, outdir: 'dist', external: ['electron'], minify: false })
+  await build({ ...common, entryPoints: { main: 'src/main.ts', preload: 'src/preload.ts' }, outdir: 'dist', external: ['electron', 'electron-updater'], minify: false })
 }

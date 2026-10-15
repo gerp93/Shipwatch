@@ -67,7 +67,8 @@ export type PrSummary = {
 
 export type RepoCreated = { name: string; createdAt: string; isArchived: boolean; isFork: boolean }
 
-export type StatsRange = 7 | 30 | 90 | 365
+/** Days back from now; 0 means all time (from the first repo). */
+export type StatsRange = number
 
 export type StatsMode = 'combined' | 'separate'
 

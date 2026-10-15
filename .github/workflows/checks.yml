@@ -36,12 +36,15 @@ jobs:
       - name: Report page script is in sync with the core's generated bundle
         run: node scripts/build-report.mjs --check
 
+      - name: Vendored VisualAssault themes match their pinned tag
+        run: node scripts/update-visual-assault-css.mjs --check
+
       - name: Report page script typechecks
         run: npx --yes -p typescript@5 tsc --noEmit -p src/report/tsconfig.json
 
   app:
-    # The Electron app (app/) shares the core with the plugin. It is built and tested here; releases of its
-    # installers go through the shared release workflow (see README, "The standalone app").
+    # The Electron app (app/) shares the core with the plugin. It is built and tested here; its installers are
+    # released by auto-release.yml / cut-release.yml through KVG_Standards' release-electron.yml (app_dir: app).
     runs-on: ubuntu-latest
     defaults:
       run:

@@ -207,3 +207,49 @@ test('buildBoard leaves out archived and ignored repos', async () => {
   const repos = await buildBoard(gh.io, ACCESS, { owner: 'me', count: 40, includeForks: false, ignore: new Set(['skip']), staleMs: 14 * DAY }, NOW, new Map())
   expect(repos.map(r => r.name)).toEqual(['keep'])
 })
+
+test('a long load keeps what it has fetched, newest first, when GitHub stops it part way', async () => {
+  const store = memoryStore()
+  const rateLimited = (ask: Ask): unknown => {
+    if (ask.text.includes('viewer')) return { data: { viewer: { login: 'me' } } }
+    if (ask.text.includes('CREATED_AT')) return { data: { repositoryOwner: { repositories: { pageInfo: { hasNextPage: false }, nodes: [] } } } }
+    if (ask.vars.q?.includes('merged:2026-10-09..')) return search([]) // today, still empty
+    if (ask.vars.q?.includes('merged:2026-09-09..')) return search([pr('new', 'app', '2026-10-01T10:00:00Z', [commit({})])])
+    throw new Error('gh: API rate limit already exceeded for user ID 1.')
+  }
+  const gh = fakeGitHub(rateLimited)
+  let failure = ''
+  try {
+    await refreshStats({ io: gh.io, access: ACCESS, store, owner: 'me', aiNames: [], now: NOW }, emptyStats({ range: 90 }))
+  } catch (err) {
+    failure = String(err)
+  }
+  expect(failure).toContain('rate limit')
+  // The newest windows were asked for first and kept: one unbroken stretch from there to yesterday.
+  const windows = gh.asked.map(a => a.vars.q).filter(Boolean)
+  expect(windows[0]).toContain('merged:2026-10-09..')
+  expect(windows[1]).toContain('merged:2026-09-09..')
+  const kept = await loadStatsCache(store, 'me', [])
+  expect(kept?.prs.map(p => p.id)).toEqual(['new'])
+  expect(kept?.coveredFrom).toBe('2026-09-09')
+  expect(kept?.coveredThrough).toBe('2026-10-08')
+
+  // The next run, told how to wait, rides out the limit once and then fills in the older windows only.
+  let limited = true
+  const second = fakeGitHub(ask => {
+    if (limited && ask.vars.q?.includes('merged:2026-08-10..')) {
+      limited = false
+      throw new Error('gh: API rate limit already exceeded for user ID 1.')
+    }
+    if (ask.vars.q?.includes('merged:2026-08-10..2026-09-08')) return search([pr('old', 'app', '2026-08-20T10:00:00Z', [commit({})])])
+    return ask.vars.q ? search([]) : rateLimited(ask)
+  })
+  const waits: number[] = []
+  const done = await refreshStats(
+    { io: second.io, access: ACCESS, store, owner: 'me', aiNames: [], now: NOW, wait: async ms => void waits.push(ms) },
+    emptyStats({ ...kept!, range: 90 }),
+  )
+  expect(waits).toEqual([60_000])
+  expect(done.prs.map(p => p.id).sort()).toEqual(['new', 'old'])
+  expect(done.coveredFrom).toBe('2026-07-11')
+})

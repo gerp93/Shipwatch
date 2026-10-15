@@ -3,15 +3,22 @@ import { expect, test } from 'claude-code/testing'
 import type { PrSummary } from './types'
 import {
   ALL_AI,
+  ALL_TIME,
   MIXED,
   OTHERS,
   YOU,
   actorOf,
   aggregate,
   aiFamilyOf,
+  actorLabel,
   aisIn,
   barCells,
+  bucketFor,
+  commitSeries,
   compact,
+  earliestKnown,
+  rangeLabel,
+  rangeSince,
   reposCreatedSince,
   summarizePr,
   trailersOf,
@@ -199,4 +206,62 @@ test('mergeById keeps one copy of each PR, preferring the newer', () => {
   const merged = mergeById([pr('a', '2026-10-01T00:00:00Z', 'x', { [YOU]: [1, 1, 1] })], [pr('a', '2026-10-01T00:00:00Z', 'x', { Claude: [1, 1, 1] }), pr('b', '2026-10-02T00:00:00Z', 'x', {})])
   expect(merged.map(p => p.id)).toEqual(['a', 'b'])
   expect(merged[0]!.by).toEqual({ Claude: [1, 1, 1] })
+})
+
+test('range buttons say how far back they reach, and all time starts at the oldest thing known', () => {
+  expect(rangeLabel(180)).toBe('180 days')
+  expect(rangeLabel(365)).toBe('365 days')
+  expect(rangeLabel(730)).toBe('2 years')
+  expect(rangeLabel(1825)).toBe('5 years')
+  expect(rangeLabel(ALL_TIME)).toBe('All time')
+  const now = Date.parse('2026-10-15T12:00:00Z')
+  const oldest = Date.parse('2022-03-01T00:00:00Z')
+  expect(rangeSince(ALL_TIME, now, oldest)).toBe(oldest)
+  expect(rangeSince(180, now, oldest)).toBe(now - 180 * 86_400_000)
+  // With nothing known yet, all time falls back to a year rather than to 1970.
+  expect(rangeSince(ALL_TIME, now, undefined)).toBe(now - 365 * 86_400_000)
+  expect(earliestKnown([{ name: 'a', createdAt: '2023-05-01T00:00:00Z', isArchived: false, isFork: false }], [pr('p', '2022-03-01T00:00:00Z', 'a', {})])).toBe(oldest)
+  expect(earliestKnown([], [])).toBeUndefined()
+})
+
+test('the stored Others key is shown as other people', () => {
+  expect(actorLabel(OTHERS)).toBe('Other people')
+  expect(actorLabel(YOU)).toBe('You')
+  expect(actorLabel('Claude')).toBe('Claude')
+})
+
+test('commits are totalled per day on the day their PR merged, and charted as aligned series with zeros for quiet buckets', () => {
+  const prs = [
+    pr('1', '2026-10-05T10:00:00Z', 'a', { You: [2, 10, 1], Claude: [3, 20, 2] }),
+    pr('2', '2026-10-05T18:00:00Z', 'a', { Claude: [1, 5, 0] }),
+    pr('3', '2026-10-12T09:00:00Z', 'b', { You: [4, 8, 8] }),
+  ]
+  const agg = aggregate(prs, 0, 'combined')
+  expect(agg.days).toEqual([
+    { date: '2026-10-05', commits: { You: 2, AI: 4 } },
+    { date: '2026-10-12', commits: { You: 4 } },
+  ])
+  const from = Date.parse('2026-10-04T00:00:00Z')
+  const to = Date.parse('2026-10-14T00:00:00Z')
+  const daily = commitSeries(agg.days, [YOU, ALL_AI], 'day', from, to)
+  expect(daily.labels.length).toBe(11)
+  expect(daily.values[YOU]![1]).toBe(2)
+  expect(daily.values[ALL_AI]![1]).toBe(4)
+  expect(daily.values[YOU]![0]).toBe(0)
+  // Weeks start on Monday: the 5th falls in the week of the 5th (a Monday), the 12th in the next.
+  const weekly = commitSeries(agg.days, [YOU, ALL_AI], 'week', from, to)
+  expect(weekly.labels).toEqual(['2026-09-28', '2026-10-05', '2026-10-12'])
+  expect(weekly.values[YOU]).toEqual([0, 2, 4])
+  const monthly = commitSeries(agg.days, [YOU], 'month', Date.parse('2026-08-15T00:00:00Z'), to)
+  expect(monthly.labels).toEqual(['2026-08', '2026-09', '2026-10'])
+  expect(monthly.values[YOU]).toEqual([0, 0, 6])
+})
+
+test('the chart gets coarser as the range gets longer', () => {
+  expect(bucketFor(7)).toBe('day')
+  expect(bucketFor(30)).toBe('day')
+  expect(bucketFor(90)).toBe('week')
+  expect(bucketFor(180)).toBe('week')
+  expect(bucketFor(365)).toBe('month')
+  expect(bucketFor(3000)).toBe('month')
 })

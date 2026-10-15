@@ -31,8 +31,8 @@ const num = (n: number): number => (Number.isFinite(n) && n > 0 ? n : 0)
 const round = (n: number): string => String(Math.round(n * 100) / 100)
 
 const STYLE =
-  '<style>text{font:12px system-ui,sans-serif;fill:#4b5563}.strong{fill:#111827;font-weight:600}.dim{fill:#6b7280}' +
-  '@media (prefers-color-scheme:dark){text{fill:#c5cad3}.strong{fill:#f3f4f6}.dim{fill:#9ca3af}}' +
+  '<style>text{font:12px system-ui,sans-serif;fill:var(--chart-fg,#4b5563)}.strong{fill:var(--chart-strong,#111827);font-weight:600}.dim{fill:var(--chart-dim,#6b7280)}' +
+  '@media (prefers-color-scheme:dark){text{fill:var(--chart-fg,#c5cad3)}.strong{fill:var(--chart-strong,#f3f4f6)}.dim{fill:var(--chart-dim,#9ca3af)}}' +
   'rect.m:hover,circle.m:hover{opacity:.8}</style>'
 
 const svg = (width: number, height: number, body: string): string => {
@@ -149,5 +149,60 @@ export function weeksSvg(weeks: WeekColumn[], width = 520, height = 150): string
       body += `<text class="dim" x="${round(x + barW / 2)}" y="${height - 6}" text-anchor="middle">${esc(w.label)}</text>`
     }
   })
+  return svg(width, height, body)
+}
+
+export type LineSeries = { label: string; color: string; values: number[] }
+
+/** A "nice" ceiling for a value axis that halves into whole numbers: 2, 4, 6, 8 or 10 times a power of ten. */
+const niceMax = (v: number): number => {
+  if (v <= 2) return 2
+  const p = 10 ** Math.floor(Math.log10(v))
+  const f = Math.ceil(v / p / 2) * 2
+  return f * p
+}
+
+/**
+ * A line per series across `labels` (one value per label, oldest left), on a shared value axis with three
+ * gridlines (zero, half, top). Every point carries a tooltip; with many points the markers are invisible hit areas so the
+ * lines stay clean. `unit` names what is counted in the tooltip.
+ */
+export function linesSvg(labels: string[], series: LineSeries[], width = 760, height = 200, unit = 'commits'): string {
+  const n = labels.length
+  const live = series.filter(s => s.values.some(v => num(v) > 0))
+  if (n === 0 || live.length === 0) return ''
+  const left = 38
+  const top = 10
+  const bottom = 22
+  const right = 8
+  const plotW = width - left - right
+  const plotH = height - top - bottom
+  const max = niceMax(Math.max(...live.flatMap(s => s.values.map(num))))
+  const x = (i: number): number => left + (n === 1 ? plotW / 2 : (i / (n - 1)) * plotW)
+  const y = (v: number): number => top + plotH - (num(v) / max) * plotH
+  let body = ''
+  for (const f of [0, 1 / 2, 1]) {
+    const gy = top + plotH - f * plotH
+    body += `<line x1="${left}" y1="${round(gy)}" x2="${width - right}" y2="${round(gy)}" stroke="${GREY}" stroke-opacity="${f === 0 ? '.5' : '.2'}"/>`
+    body += `<text class="dim" x="${left - 6}" y="${round(gy + 4)}" text-anchor="end">${round(max * f)}</text>`
+  }
+  const every = Math.max(1, Math.ceil(n / 6))
+  labels.forEach((l, i) => {
+    // A label that would run off either edge is anchored to it instead of centred on its point.
+    if (i % every === 0) {
+      const anchor = x(i) + 28 > width ? 'end' : x(i) - 28 < left ? 'start' : 'middle'
+      body += `<text class="dim" x="${round(x(i))}" y="${height - 6}" text-anchor="${anchor}">${esc(l)}</text>`
+    }
+  })
+  const marker = n <= 60 ? 3 : 6
+  for (const s of live) {
+    const pts = s.values.map((v, i) => `${round(x(i))},${round(y(v))}`).join(' ')
+    body += `<polyline points="${pts}" fill="none" stroke="${s.color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`
+    s.values.forEach((v, i) => {
+      if (n > 60 && num(v) <= 0) return
+      const visible = n <= 60
+      body += `<circle class="m" cx="${round(x(i))}" cy="${round(y(v))}" r="${marker}" fill="${visible ? s.color : 'transparent'}"><title>${esc(labels[i]!)} · ${esc(s.label)}: ${num(v)} ${esc(unit)}</title></circle>`
+    })
+  }
   return svg(width, height, body)
 }

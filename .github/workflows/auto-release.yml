@@ -1,18 +1,10 @@
-# Template: copy to .github/workflows/auto-release.yml in a consumer repo
-# and fill in the TODO. Fires a release on EVERY push to main — no manual
-# step. Coexists with cut-release.yml: this handles the default
-# every-commit-ships case (conventional-commit-driven patch/minor/major
-# bump), cut-release.yml stays available for a deliberately-numbered
-# release when you want one instead of the auto-bumped version.
+# Template: copy to .github/workflows/auto-release.yml in a repo that is a Claude Code plugin AND ships a
+# companion Electron app from a subfolder (see claude-plugins.md, "A plugin with a companion app").
+# It replaces templates/auto-release.yml for that repo; pair it with cut-release-plugin-app.yml.
 #
-# The version bump itself (mathieudutour/github-tag-action) reads
-# Conventional Commits prefixes across the pushed commits to decide
-# patch/minor/major, then creates+pushes the tag. That tag push uses the
-# default GITHUB_TOKEN, which normally wouldn't trigger another workflow's
-# `on: push: tags` (GitHub suppresses recursive GITHUB_TOKEN-triggered
-# runs) — but that doesn't matter here, since the release job below calls
-# the build workflow directly via `uses:` in the same run, not by relying
-# on the tag push to fire a separate workflow.
+# Every push to main bumps the version, tags it, and publishes the plugin's release. The app's installers
+# are added to that same release, but only when the push touched the app or code it shares: a reusable
+# workflow cannot filter by path, so the filter lives here in the caller. Edit the `paths` list to match.
 
 name: Auto Release
 
@@ -41,12 +33,44 @@ jobs:
           default_bump: patch
           release_branches: main
 
-  release:
+  changes:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      app: ${{ steps.filter.outputs.app }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            app:
+              - 'app/**'
+              # Code the app shares with the plugin. Keep in step with what app/ imports.
+              - 'src/core/**'
+              - 'src/report/**'
+              - 'scripts/build-report.mjs'
+
+  plugin:
     needs: version
     if: ${{ needs.version.outputs.new_tag != '' }}
     uses: gerp93/KVG_Standards/.github/workflows/release-claude-plugin.yml@main
     with:
       version: ${{ needs.version.outputs.new_tag }}
-      plugin_name: shipwatch
+      plugin_name: shipwatch # as listed in .claude-plugin/marketplace.json
+    permissions:
+      contents: write
+
+  app:
+    # After the plugin job, which creates the release the installers are added to.
+    needs: [version, changes, plugin]
+    if: ${{ needs.version.outputs.new_tag != '' && needs.changes.outputs.app == 'true' }}
+    uses: gerp93/KVG_Standards/.github/workflows/release-electron.yml@main
+    with:
+      version: ${{ needs.version.outputs.new_tag }}
+      app_dir: app
+      skip_release_notes: true # the plugin job wrote the release text
     permissions:
       contents: write

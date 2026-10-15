@@ -6,6 +6,7 @@ import type { InfraVerdicts } from '../../src/core/boardService'
 import { connect, resolveOwner } from '../../src/core/github'
 import type { IO, Store } from '../../src/core/ports'
 import type { ReportData } from '../../src/core/report'
+import { ALL_TIME } from '../../src/core/stats'
 import { loadStatsCache, refreshStats } from '../../src/core/statsService'
 import type { StatsBoard } from '../../src/core/types'
 
@@ -13,8 +14,11 @@ import type { AppConfig } from './config'
 
 const DAY_MS = 86_400_000
 
-/** The stats history covers a year, the longest range the report offers; only what is new is fetched after the first run. */
-const STATS_RANGE = 365
+/**
+ * The stats history reaches back to the account's first repo, so every range the report offers has its data.
+ * The first run loads all of it (a few minutes for years of work); after that only what is new is fetched.
+ */
+const STATS_RANGE = ALL_TIME
 
 const EMPTY_STATS: StatsBoard = {
   range: STATS_RANGE,
@@ -80,6 +84,7 @@ export const collect = async (deps: CollectDeps): Promise<{ data: ReportData; st
         aiNames: config.aiNames,
         now,
         onProgress: text => deps.onProgress?.(text),
+        wait: ms => new Promise(resolve => setTimeout(resolve, ms)),
         onPartial: (prs, you) => void (stats = { ...stats, prs, you }),
       },
       stats,
