@@ -55,7 +55,8 @@
       {
         "provider": "github",
         "owner": "gerp93",
-        "repo": "Shipwatch"
+        "repo": "Shipwatch",
+        "releaseType": "release"
       }
     ]
   },
