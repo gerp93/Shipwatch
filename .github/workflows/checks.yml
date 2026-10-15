@@ -32,3 +32,9 @@ jobs:
 
       - name: Core is pure (typechecks with no host APIs)
         run: npx --yes -p typescript@5 tsc --noEmit -p src/core/tsconfig.json
+
+      - name: Report page script is in sync with the core's generated bundle
+        run: node scripts/build-report.mjs --check
+
+      - name: Report page script typechecks
+        run: npx --yes -p typescript@5 tsc --noEmit -p src/report/tsconfig.json

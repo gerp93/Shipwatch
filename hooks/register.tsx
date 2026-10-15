@@ -7,6 +7,7 @@ import { buildBoard } from '../src/core/boardService'
 import { barsSvg, chartColor, donutSvg, legendSvg, weeksSvg } from '../src/core/charts'
 import type { InfraVerdicts } from '../src/core/boardService'
 import { connect, resolveOwner } from '../src/core/github'
+import { openArgv, renderReport } from '../src/core/report'
 import { headlineLink, safeHref, stepLinks } from '../src/core/links'
 import type { StepLinks } from '../src/core/links'
 import type { Access, IO, Store } from '../src/core/ports'
@@ -217,6 +218,41 @@ async function loadStats($: any, force = false): Promise<void> {
   }
 }
 
+let isOpeningReport = false
+
+/**
+ * Writes the full report (a self-contained HTML page, see `renderReport` in the core) to the temp folder and
+ * opens it in the default browser. The stats history is brought up to date first, so the page has something
+ * to show even if the Stats view was never opened.
+ */
+async function openReport($: any): Promise<void> {
+  if (isOpeningReport) return
+  isOpeningReport = true
+  try {
+    $.ui.toast('Shipwatch: building the report...')
+    await loadStats($)
+    const b = await read($, board)
+    const s = await read($, stats)
+    const generatedAt: number = await $.clock.now()
+    const html = renderReport({
+      generatedAt,
+      board: { owner: b.owner, repos: b.repos },
+      stats: { prs: s.prs, repos: s.repos, you: s.you },
+    })
+    const dir = (await $.env.get('TEMP')) || (await $.env.get('TMPDIR')) || '/tmp'
+    const path = `${String(dir).replace(/[\\/]+$/, '')}/shipwatch-report.html`
+    await $.fs.write(path, html)
+    const isWindows = (await $.env.get('OS')) === 'Windows_NT'
+    const isMac = !isWindows && (await $.process.run(['uname'])).stdout.trim() === 'Darwin'
+    const opened = await $.process.run(openArgv(isWindows, isMac, path))
+    if (opened.exitCode !== 0) $.ui.toast(`Shipwatch: report saved to ${path}`)
+  } catch (err) {
+    $.ui.toast(`Shipwatch: could not build the report (${err instanceof Error ? err.message : String(err)})`)
+  } finally {
+    isOpeningReport = false
+  }
+}
+
 function loop($: any, wait: number): void {
   timer?.cancel()
   timer = $.clock.after(wait, async () => loop($, await refresh($)))
@@ -384,6 +420,7 @@ export const register: Register = (on, options) => {
             void loadStats($)
           }}
         />
+        <Button key="view-report" hotkey="o" label="Full report" onPress={() => void openReport($)} />
       </Box>
     )
 

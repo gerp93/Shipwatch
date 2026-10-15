@@ -69,6 +69,10 @@ a year, across every repo the account owns:
 - **Charts.** On the desktop app and the editor the Stats view draws a donut of who wrote what, stacked bars per repo and
   a per-week column chart as vector graphics, with a tooltip on every mark. The terminal has no vector drawing, so it keeps
   the text bars. The charts are SVG strings from `src/core/charts.ts`, so any outlet can draw the same ones.
+- **Full report.** The **Full report** button writes one self-contained HTML page (no network, nothing beside it) to the
+  temp folder and opens it in your browser: the dashboard and the stats with filters, sortable tables, the charts, and a
+  click-through to look at one repo alone. It is the same code as the pane, in `src/core/report.ts`; its script is
+  `src/report/client.ts`, bundled into `src/core/reportClient.generated.ts` by `node scripts/build-report.mjs`.
 
 Merged PRs never change, so each is fetched once and kept (in the plugin's store, across
 sessions); opening Stats again only asks for what is new. The first load of a long range can take
