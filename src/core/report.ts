@@ -10,12 +10,22 @@ import { REPORT_CLIENT_JS } from './reportClient.generated'
 import { THEMES_CSS } from './themes.generated'
 import type { Board, StatsBoard } from './types'
 
+/**
+ * Where the stats history stands when the page is made, for a host that loads it after the page is up (the
+ * app shows the dashboard first). Absent means the stats are complete as given.
+ */
+export type StatsStatus =
+  | { state: 'loading'; text: string; fraction?: number }
+  | { state: 'error'; text: string }
+
 /** What the page is generated from. Everything the page shows is derived from this, nothing is fetched. */
 export type ReportData = {
   /** Epoch ms the data was taken; the page's "ago" and its date ranges count back from here. */
   generatedAt: number
   board: Pick<Board, 'owner' | 'repos'>
   stats: Pick<StatsBoard, 'prs' | 'repos' | 'you'>
+  /** Set while the stats are still loading (or failed part way); the Stats tab says so. */
+  statsStatus?: StatsStatus
   /** A small image as a `data:` address, shown beside the title. Optional; the pane's report has none. */
   logo?: string
 }
@@ -57,6 +67,9 @@ table.compact{width:auto;min-width:340px}
 .dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px}
 .chip{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:2px 4px 2px 10px}.x{font:inherit;background:none;border:0;color:var(--dim);cursor:pointer;padding:0 6px}
 .svg{max-width:100%;overflow-x:auto}.svg svg{max-width:100%;height:auto}
+.banner{border:1px solid var(--line);background:var(--card);border-radius:8px;padding:10px 14px;margin:8px 0}.banner.bad{border-color:var(--fail)}
+.meter{height:6px;border-radius:3px;background:var(--line);overflow:hidden;margin:8px 0}.meter>div{height:100%;width:0;background:var(--ready);transition:width .4s}
+.meter[data-indeterminate]>div{width:30%;animation:slide 1.2s ease-in-out infinite}@keyframes slide{0%{margin-left:-30%}100%{margin-left:100%}}
 .logo{height:36px;width:auto;margin-right:4px}select.theme{font:inherit;background:var(--card);color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:4px 8px}
 /* Charts take their text colour from the page so they stay readable on any theme. */
 body{--chart-fg:var(--fg);--chart-strong:var(--fg);--chart-dim:var(--dim)}

@@ -10,10 +10,14 @@ import { pathToFileURL } from 'node:url'
 
 import type { InfraVerdicts } from '../../src/core/boardService'
 import { renderReport } from '../../src/core/report'
+import type { ReportData, StatsStatus } from '../../src/core/report'
+import { STATS_FRESH_MS } from '../../src/core/statsService'
 
 import { FileStore, nodeIO } from './adapters'
-import { collect } from './collect'
+import { collectDashboard, collectStats, savedStats } from './collect'
+import type { CollectDeps, DashboardRead } from './collect'
 import { readConfig } from './config'
+import { setStatsScript, setStatusScript, throttled } from './live'
 import { mergeFromReport } from './merge'
 import { errorPage, isSafeExternalUrl, loadingPage, progressFraction } from './pages'
 import { checkForUpdatesNow, setupAutoUpdater } from './updates'
@@ -52,6 +56,54 @@ async function loadConfig(): Promise<ReturnType<typeof readConfig>> {
   return readConfig(file, process.env)
 }
 
+/** The stats history is read after the dashboard is on screen, one load at a time; the page is told how it goes. */
+let isLoadingStats = false
+let statsStatus: StatsStatus | null = null
+let statsLoadedAt = 0
+
+/** A load that finished a moment ago is not repeated just because the dashboard was refreshed. */
+const shouldLoadStats = (): boolean => Date.now() - statsLoadedAt >= STATS_FRESH_MS
+
+/** Runs a line of script in the report on screen, if there is one; the page ignores it when it is not ready yet. */
+const toPage = (script: string): void => void win?.webContents.executeJavaScript(script).catch(() => {})
+
+/**
+ * Step two: brings the history up to date, reading only what is not already saved, and shows the page the
+ * history so far as it arrives and how far along it is. Whatever loads is saved as it goes, so a stop part way
+ * (a rate limit, closing the app) costs nothing already read.
+ */
+async function loadStatsInBackground(deps: CollectDeps, read: DashboardRead): Promise<void> {
+  isLoadingStats = true
+  try {
+    statsStatus = { state: 'loading', text: 'Starting...' }
+    toPage(setStatusScript(statsStatus))
+    const start = await savedStats(deps, read.owner)
+    const sendPartial = throttled(2000, (stats: ReportData['stats']) => toPage(setStatsScript(stats)))
+    const { stats, error } = await collectStats(
+      {
+        ...deps,
+        onProgress: text => {
+          statsStatus = { state: 'loading', text, fraction: progressFraction(text) }
+          toPage(setStatusScript(statsStatus))
+        },
+      },
+      read,
+      start,
+      sendPartial,
+    )
+    toPage(setStatsScript({ prs: stats.prs, repos: stats.repos, you: stats.you }))
+    statsStatus = error ? { state: 'error', text: error } : null
+    toPage(setStatusScript(statsStatus))
+    if (error) win?.setTitle(`Shipwatch - stats incomplete: ${error}`.slice(0, 120))
+    else statsLoadedAt = Date.now()
+  } catch (err) {
+    statsStatus = { state: 'error', text: err instanceof Error ? err.message : String(err) }
+    toPage(setStatusScript(statsStatus))
+  } finally {
+    isLoadingStats = false
+  }
+}
+
 async function refresh(): Promise<void> {
   if (isRefreshing || !win) return
   isRefreshing = true
@@ -62,21 +114,34 @@ async function refresh(): Promise<void> {
       void win?.webContents.executeJavaScript(`window.setProgress(${JSON.stringify(text)}, ${fraction ?? 'undefined'})`).catch(() => {})
     }
     const config = await loadConfig()
-    const { data, statsError } = await collect({
+    const deps: CollectDeps = {
       io: nodeIO(),
       store: new FileStore(userFile('stats.json')),
       config,
       now: Date.now(),
       infraVerdicts,
       onProgress: say,
-    })
-    onScreen = { owner: data.board.owner, prs: new Set(data.board.repos.flatMap(r => r.prs.map(p => `${r.name}#${p.number}`))) }
+    }
+    // Step one: the dashboard, which is quick. The window shows it as soon as it is read, with whatever stats
+    // history is already saved; the slow part (older history) is read afterwards, in the background.
+    const read = await collectDashboard(deps)
+    const saved = await savedStats(deps, read.owner)
+    onScreen = { owner: read.owner, prs: new Set(read.repos.flatMap(r => r.prs.map(p => `${r.name}#${p.number}`))) }
+    const loadingStats = isLoadingStats || shouldLoadStats()
+    const status: StatsStatus | undefined = isLoadingStats ? (statsStatus ?? undefined) : loadingStats ? { state: 'loading', text: 'Starting...' } : undefined
     // The report is a real file, not a data: address, because years of history are too big for one.
     const page = userFile('report.html')
-    await writeFile(page, renderReport({ ...data, logo: await readLogo() }), 'utf8')
+    const data: ReportData = {
+      generatedAt: deps.now,
+      board: { owner: read.owner, repos: read.repos },
+      stats: { prs: saved.prs, repos: saved.repos, you: saved.you },
+      statsStatus: status,
+      logo: await readLogo(),
+    }
+    await writeFile(page, renderReport(data), 'utf8')
     await win.loadFile(page)
-    if (statsError) win.setTitle(`Shipwatch - stats incomplete: ${statsError}`.slice(0, 120))
-    else win.setTitle('Shipwatch')
+    win.setTitle('Shipwatch')
+    if (!isLoadingStats && loadingStats) void loadStatsInBackground({ ...deps, onProgress: undefined }, read)
   } catch (err) {
     await showHtml(errorPage(err instanceof Error ? err.message : String(err))).catch(() => {})
   } finally {

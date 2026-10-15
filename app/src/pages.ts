@@ -48,7 +48,7 @@ export const loadingPage = (): string =>
   page(
     '<h2>Shipwatch</h2><p>Reading your repos from GitHub...</p>' +
       '<div id="bar" data-indeterminate="1"><div></div></div>' +
-      '<p class="dim" id="p">The first run also loads all of your merged-PR history, which can take a few minutes.</p>' +
+      '<p class="dim" id="p">Your stats history loads afterwards, in the background.</p>' +
       '<p class="dim">Running for <span id="t">0:00</span></p>',
     LOADING_SCRIPT,
   )

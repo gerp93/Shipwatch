@@ -3,7 +3,7 @@ import { RATE_LIMITED, rateLimitMessage } from './budget'
 import { fetchGraphqlReset } from './github'
 import { dateOf, earliestKnown, mergeById, planFetch, rangeSince, summarizePr } from './stats'
 import { fetchMergedPrs, fetchReposCreated, fetchViewerLogin } from './statsFetch'
-import type { PrSummary, StatsBoard } from './types'
+import type { PrSummary, RepoCreated, StatsBoard } from './types'
 
 /** Bump when what a stored PR summary holds changes, so old ones are fetched again. */
 export const STATS_VERSION = 1
@@ -51,7 +51,7 @@ export type StatsDeps = {
   /** What the loader is doing, in words, as it goes. */
   onProgress?: (text: string) => void
   /** The history so far, after each month-sized window arrives, so a long load can show what it has. */
-  onPartial?: (prs: PrSummary[], you: string) => void
+  onPartial?: (prs: PrSummary[], you: string, repos: RepoCreated[]) => void
   /**
    * Waits `ms`, for the host to supply (the core has no timers of its own). With it, a window that GitHub
    * refuses for rate limiting is tried again after a pause; without it, that failure ends the load.
@@ -122,7 +122,7 @@ export const refreshStats = async (deps: StatsDeps, s: StatsBoard): Promise<Stat
     if (!cover.from || !cover.through) cover = { from: w.from, through: yesterday }
     else if (w.to < cover.from) cover = { ...cover, from: w.from }
     else cover = { ...cover, through: w.to < yesterday ? w.to : yesterday }
-    deps.onPartial?.(prs, you)
+    deps.onPartial?.(prs, you, repos)
     // Keep what has arrived, so a failure further back loses nothing already fetched.
     if (raw.length > 0) await save()
   }

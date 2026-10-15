@@ -215,8 +215,13 @@ npm start
 
 It uses the `gh` CLI you are signed in with, or `GITHUB_TOKEN`. Optional settings go in `config.json` in the app's
 user-data folder (`%APPDATA%/Shipwatch` on Windows): `owner`, `includeForks`, `maxRepos`, `staleDays`, `aiNames`,
-`ignore`. `SHIPWATCH_OWNER` overrides the owner. The first run loads your whole merged-PR history (back to your first
-repo), which takes a few minutes; later runs fetch only what is new.
+`ignore`. `SHIPWATCH_OWNER` overrides the owner.
+
+The dashboard appears as soon as your repos are read (seconds). The stats history loads afterwards, in the background,
+with a progress bar on the Stats tab, and the numbers fill in as it arrives. It is saved in `stats.json` in the same
+folder, newest first, as it loads, so closing the app or hitting a rate limit part way loses nothing, and the next run
+carries on from there. The first run reads your whole merged-PR history (back to your first repo), which takes a few
+minutes; after that only the days since are read, and Refresh does not repeat a load that finished in the last ten minutes.
 
 The report has a theme picker: the [VisualAssault](https://github.com/gerp93/VisualAssault) themes, vendored at a pinned
 tag into `src/core/themes.generated.ts` by `node scripts/update-visual-assault-css.mjs <tag>` (CI checks the file matches its tag).

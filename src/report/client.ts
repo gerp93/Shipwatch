@@ -215,6 +215,44 @@ function commitsOverTime(agg: ReturnType<typeof aggregate>, sinceMs: number, col
   )
 }
 
+// ---- Stats still loading -----------------------------------------------------------------------------------
+// The app shows the dashboard first and reads the long stats history afterwards, handing the page what it has
+// as it arrives (see `shipwatchLive` at the end). Until then the Stats tab says what is going on.
+
+type Status = NonNullable<ReportData['statsStatus']>
+
+/** Fills the notice for `st`: what is happening, a bar while it loads, and what is held so far. */
+function fillBanner(box: HTMLElement, st: Status): void {
+  box.className = st.state === 'error' ? 'banner bad' : 'banner'
+  const held = data.stats.prs.reduce((min, p) => (p.mergedAt < min ? p.mergedAt : min), '9999')
+  const heldNote = data.stats.prs.length > 0 ? `Showing what is saved so far (back to ${held.slice(0, 10)}).` : 'Nothing is saved yet.'
+  if (st.state === 'error') {
+    box.replaceChildren(
+      el('strong', {}, 'Stats are incomplete'),
+      el('div', {}, st.text),
+      el('div', { class: 'dim' }, `${heldNote} What has loaded is kept; choose View, Refresh to carry on from there.`),
+    )
+    return
+  }
+  const meter = el('div', { class: 'meter' }, el('div'))
+  if (typeof st.fraction === 'number') (meter.firstElementChild as HTMLElement).style.width = `${Math.round(st.fraction * 100)}%`
+  else meter.setAttribute('data-indeterminate', '1')
+  box.replaceChildren(
+    el('strong', {}, 'Loading your history from GitHub...'),
+    el('div', { class: 'dim' }, st.text || 'Starting...'),
+    meter,
+    el('div', { class: 'dim' }, `${heldNote} Longer ranges fill in as it goes; it only reads what it does not already have.`),
+  )
+}
+
+function statsBanner(): HTMLElement | null {
+  const st = data.statsStatus
+  if (!st) return null
+  const box = el('div', { id: 'stats-banner' })
+  fillBanner(box, st)
+  return box
+}
+
 function stats(): HTMLElement {
   const s = data.stats
   const ais = aisIn(s.prs)
@@ -248,6 +286,7 @@ function stats(): HTMLElement {
   return el(
     'section',
     {},
+    statsBanner(),
     el(
       'div',
       { class: 'row wrap' },
@@ -433,7 +472,7 @@ function draw(): void {
         ...THEME_IDS.map(id => el('option', { value: id, selected: id === document.body.className ? 'selected' : undefined }, themeLabel(id))),
       ),
       button('Dashboard', state.view === 'dashboard', () => ((state.view = 'dashboard'), draw())),
-      button('Stats', state.view === 'stats', () => ((state.view = 'stats'), draw())),
+      button(data.statsStatus?.state === 'loading' ? 'Stats (loading...)' : 'Stats', state.view === 'stats', () => ((state.view = 'stats'), draw())),
     ),
     state.view === 'dashboard' ? dashboard() : stats(),
   )
@@ -451,3 +490,22 @@ function drawKeepFocus(selector: string): void {
 }
 
 draw()
+
+/**
+ * What the host calls to fill the stats in after the page is up: `setStats` with the history so far (the page
+ * keeps its tab, filters and range), `setStatus` with how loading is going (or nothing when it is done).
+ * Progress updates only repaint the notice, so a long load does not keep redrawing the page under the reader.
+ */
+;(window as unknown as { shipwatchLive: unknown }).shipwatchLive = {
+  setStats(stats: ReportData['stats']): void {
+    data.stats = stats
+    draw()
+  },
+  setStatus(status: ReportData['statsStatus'] | null): void {
+    const before = data.statsStatus?.state
+    data.statsStatus = status ?? undefined
+    const box = document.getElementById('stats-banner')
+    if (status && box && before === status.state) fillBanner(box, status)
+    else draw()
+  },
+}
