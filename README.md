@@ -66,6 +66,9 @@ a year, across every repo the account owns:
 - **It is a label, not a measurement of who typed the code.** "You" means a commit with no AI
   marker, which includes AI work committed without one. Lines are added and removed in commits,
   so a commit that rewrites an earlier one counts again.
+- **Charts.** On the desktop app and the editor the Stats view draws a donut of who wrote what, stacked bars per repo and
+  a per-week column chart as vector graphics, with a tooltip on every mark. The terminal has no vector drawing, so it keeps
+  the text bars. The charts are SVG strings from `src/core/charts.ts`, so any outlet can draw the same ones.
 
 Merged PRs never change, so each is fetched once and kept (in the plugin's store, across
 sessions); opening Stats again only asks for what is new. The first load of a long range can take

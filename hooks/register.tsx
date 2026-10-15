@@ -4,6 +4,7 @@ import type { Register } from 'claude-code'
 import { ago, failedOnMain, fixPrompt, snapshot, transitions } from '../src/core/analyze'
 import type { Seen } from '../src/core/analyze'
 import { buildBoard } from '../src/core/boardService'
+import { barsSvg, chartColor, donutSvg, legendSvg, weeksSvg } from '../src/core/charts'
 import type { InfraVerdicts } from '../src/core/boardService'
 import { connect, resolveOwner } from '../src/core/github'
 import { headlineLink, safeHref, stepLinks } from '../src/core/links'
@@ -272,7 +273,10 @@ export const register: Register = (on, options) => {
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
-    const { Box, Text, Button, Link } = $.ui.resolve(e)
+    const els = $.ui.resolve(e)
+    const { Box, Text, Button, Link } = els
+    // Only the remote surfaces draw vector charts; the terminal keeps the text bars.
+    const Svg = 'Svg' in els ? (els as { Svg: any }).Svg : undefined
     const b = await read($, board)
     const now: number = await $.clock.now()
     const columns = (e.props as { bodyColumns?: number }).bodyColumns ?? e.viewport?.columns ?? 80
@@ -485,6 +489,25 @@ export const register: Register = (on, options) => {
           </Box>
 
           <Text bold>Who wrote it</Text>
+          {Svg && totalCommits > 0 && (
+            <Box columnGap={2} marginBottom={1} flexWrap="wrap">
+              <Svg
+                source={donutSvg(
+                  agg.actors.map(a => ({ label: a.actor, value: a.commits, color: chartColor(a.actor, ais) })),
+                  `${Math.round(((agg.actors.find(a => a.actor === YOU)?.commits ?? 0) / totalCommits) * 100)}%`,
+                  'You, by commits',
+                )}
+                alt={`Share of commits by author: ${agg.actors.map(a => `${a.actor} ${Math.round((a.commits / totalCommits) * 100)}%`).join(', ')}`}
+                width={150}
+                height={150}
+                isInteractive
+              />
+              <Svg
+                source={legendSvg(agg.actors.map(a => ({ label: a.actor, color: chartColor(a.actor, ais) })), 220)}
+                alt={`Colours: ${agg.actors.map(a => a.actor).join(', ')}`}
+              />
+            </Box>
+          )}
           {agg.actors.map(a => {
             const share = totalCommits ? Math.round((a.commits / totalCommits) * 100) : 0
             const mine = barCells([a.commits, Math.max(0, totalCommits - a.commits)], barWidth)[0] ?? 0
@@ -515,7 +538,21 @@ export const register: Register = (on, options) => {
           {agg.repos.length > 0 && (
             <Box flexDirection="column" marginTop={1}>
               <Text bold>By repo</Text>
-              {agg.repos.slice(0, 10).map(r => (
+              {Svg && (
+                <Svg
+                  source={barsSvg(
+                    agg.repos.slice(0, 10).map(r => ({
+                      label: r.repo,
+                      parts: r.actors.map(a => ({ label: a.actor, value: a.commits, color: chartColor(a.actor, ais) })),
+                      note: `${r.prs} PR${r.prs === 1 ? '' : 's'}`,
+                    })),
+                    Math.max(320, Math.min(640, columns * 7)),
+                  )}
+                  alt={`Commits by author for the ${Math.min(10, agg.repos.length)} busiest repos`}
+                  isInteractive
+                />
+              )}
+              {!Svg && agg.repos.slice(0, 10).map(r => (
                 <Box columnGap={1}>
                   <Text>{r.repo.slice(0, 22).padEnd(22)}</Text>
                   {stacked(
@@ -532,7 +569,22 @@ export const register: Register = (on, options) => {
           {agg.weeks.length > 0 && (
             <Box flexDirection="column" marginTop={1}>
               <Text bold>By week (PRs merged)</Text>
-              {agg.weeks.slice(-12).map(w => {
+              {Svg && (
+                <Svg
+                  source={weeksSvg(
+                    agg.weeks.slice(-12).map(w => ({
+                      label: w.start.slice(5),
+                      parts: Object.entries(w.prs)
+                        .sort(([x], [y]) => (x === YOU ? -1 : y === YOU ? 1 : 0))
+                        .map(([actor, value]) => ({ label: actor, value, color: chartColor(actor, ais) })),
+                    })),
+                    Math.max(320, Math.min(640, columns * 7)),
+                  )}
+                  alt={`Pull requests merged per week, last ${Math.min(12, agg.weeks.length)} weeks`}
+                  isInteractive
+                />
+              )}
+              {!Svg && agg.weeks.slice(-12).map(w => {
                 const entries = Object.entries(w.prs).sort(([x], [y]) => (x === YOU ? -1 : y === YOU ? 1 : 0))
                 const peak = Math.max(...agg.weeks.slice(-12).map(k => Object.values(k.prs).reduce((a, c) => a + c, 0)))
                 const total = entries.reduce((n, [, c]) => n + c, 0)
