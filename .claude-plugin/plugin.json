@@ -60,6 +60,12 @@
       "title": "Auto-fix limit per session",
       "description": "Most fix prompts to queue in one session, so a failure that can't be fixed doesn't loop.",
       "default": 5
+    },
+    "aiNames": {
+      "type": "string",
+      "title": "Extra AI names",
+      "description": "Comma-separated names to count as AI in Stats, besides the ones recognized automatically (Claude, Copilot, Cursor, Codex, Gemini, any [bot] account...). A commit whose author or Co-Authored-By matches one is attributed to it.",
+      "default": ""
     }
   }
 }

@@ -1,21 +1,6 @@
+import { isInfraMessage } from './analyze'
 import type { RawRepo } from './analyze'
-
-/**
- * How this file reaches the outside world. register.tsx fills it with
- * `$.process.run` and `$.http.fetch` so `$` never leaves that file.
- */
-export type IO = {
-  run: (
-    argv: readonly string[],
-    init?: { timeoutMs?: number },
-  ) => Promise<{ exitCode: number; stdout: string; stderr: string }>
-  fetch: (
-    url: string,
-    init?: { method?: string; headers?: Record<string, string>; body?: string },
-  ) => Promise<{ status: number; ok: boolean; text: string }>
-}
-
-export type Access = { source: 'gh' | 'token'; token: string }
+import type { Access, IO } from './ports'
 
 const QUERY = `
 query($owner:String!,$n:Int!,$fork:Boolean){
@@ -23,12 +8,12 @@ query($owner:String!,$n:Int!,$fork:Boolean){
     repositories(first:$n, isFork:$fork, orderBy:{field:PUSHED_AT,direction:DESC}){
       nodes{
         name isArchived isFork pushedAt url
-        defaultBranchRef{ name target{ ... on Commit{ oid committedDate statusCheckRollup{ state } } } }
+        defaultBranchRef{ name target{ ... on Commit{ oid committedDate statusCheckRollup{ state contexts(first:30){ nodes{ ... on CheckRun{ status conclusion } ... on StatusContext{ state } } } } } } }
         latestRelease{ tagName publishedAt }
         pullRequests(states:OPEN, first:10, orderBy:{field:UPDATED_AT,direction:DESC}){
           nodes{
             number title url isDraft headRefName updatedAt mergeable
-            commits(last:1){ nodes{ commit{ statusCheckRollup{ state } } } }
+            commits(last:1){ nodes{ commit{ statusCheckRollup{ state contexts(first:30){ nodes{ ... on CheckRun{ status conclusion } ... on StatusContext{ state } } } } } } }
           }
         }
       }
@@ -62,7 +47,7 @@ export const connect = async (io: IO, token: string): Promise<Access> => {
   throw new Error('Cannot reach GitHub: install and sign in to the gh CLI (`gh auth login`), or set the githubToken option.')
 }
 
-const graphql = async (io: IO, access: Access, query: string, vars: Record<string, string | number | boolean | null>) => {
+export const graphql = async (io: IO, access: Access, query: string, vars: Record<string, string | number | boolean | null>) => {
   if (access.source === 'gh') {
     const argv = ['gh', 'api', 'graphql', '-f', `query=${query}`]
     for (const [k, v] of Object.entries(vars)) {
@@ -131,11 +116,43 @@ export const fetchRepos = async (
   return nodes.filter(Boolean)
 }
 
-/** Names of the workflow runs in flight on a repo, as `workflow · branch`. */
-export const fetchActivity = async (io: IO, access: Access, owner: string, repo: string): Promise<string[]> => {
+/** The workflow runs in flight on a repo: `workflow · branch`, and the run's page. */
+export const fetchActivity = async (
+  io: IO,
+  access: Access,
+  owner: string,
+  repo: string,
+): Promise<Array<{ text: string; url: string }>> => {
   const out = await rest(io, access, `repos/${owner}/${repo}/actions/runs?per_page=10`)
-  const runs: Array<{ name?: string; head_branch?: string; status?: string }> = out?.workflow_runs ?? []
+  const runs: Array<{ name?: string; head_branch?: string; status?: string; html_url?: string }> = out?.workflow_runs ?? []
   return runs
     .filter(r => r.status === 'in_progress' || r.status === 'queued' || r.status === 'pending')
-    .map(r => `${r.name ?? 'workflow'} · ${r.head_branch ?? '?'}`)
+    .map(r => ({ text: `${r.name ?? 'workflow'} · ${r.head_branch ?? '?'}`, url: r.html_url ?? '' }))
+}
+
+/**
+ * True when the commit's failed checks failed because GitHub never ran them
+ * (runner not acquired, runner lost), judged from the check runs' annotations:
+ * at least one check shows that, and no failed or timed-out check lacks it.
+ * Plain cancelled runs (a newer push superseding one) are ignored unless they
+ * carry the outage annotation, which GitHub files them under too.
+ */
+export const fetchInfraFailure = async (
+  io: IO,
+  access: Access,
+  owner: string,
+  repo: string,
+  sha: string,
+): Promise<boolean> => {
+  const out = await rest(io, access, `repos/${owner}/${repo}/commits/${sha}/check-runs?per_page=50`)
+  const candidates: Array<{ id: number; conclusion?: string }> = (out?.check_runs ?? []).filter(
+    (c: { conclusion?: string }) => c.conclusion === 'failure' || c.conclusion === 'timed_out' || c.conclusion === 'cancelled',
+  )
+  let sawOutage = false
+  for (const run of candidates.slice(0, 15)) {
+    const notes: Array<{ message?: string }> = await rest(io, access, `repos/${owner}/${repo}/check-runs/${run.id}/annotations`)
+    if (notes.some(n => isInfraMessage(n.message ?? ''))) sawOutage = true
+    else if (run.conclusion !== 'cancelled') return false
+  }
+  return sawOutage
 }

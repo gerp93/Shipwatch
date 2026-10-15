@@ -38,6 +38,58 @@ release. With several apps going at once it answers "which of these is waiting o
 With an open PR the stepper follows the most urgent one (conflicts or failing checks, then
 running, then ready). With none it follows the default branch.
 
+**Drafts are shown, quietly.** A draft PR never leads the stepper and never turns a repo red;
+its line is dimmed, and its checks are not announced. A repo whose only open PRs are drafts
+shows its default branch's state if that needs attention, and otherwise sits below the real work
+as "draft".
+
+**Cancelled and skipped runs are not failures.** GitHub's combined status counts a run that a
+newer push cancelled as a failure. Shipwatch reads the individual checks instead: only a failed
+or timed-out check fails, only an unfinished one is running, and a commit whose runs were all
+cancelled or skipped shows no build state.
+
+### Stats
+
+The **Stats** button switches the pane to what you have shipped over the last 7, 30, 90 days or
+a year, across every repo the account owns:
+
+- PRs merged, commits, lines changed (added and removed) and repos created, with a bar per
+  author, a per-repo breakdown, and a per-week trend.
+- **Who it is attributed to.** Claude Code, Cursor and Copilot all commit and open PRs under
+  your own account, so who opened a PR says nothing. Each commit is attributed by its author
+  and its `Co-Authored-By` lines to You, or to the AI named there. Known AIs are recognized by
+  name (Claude, Copilot, Cursor, Codex, Gemini and others); any other `[bot]` account is named
+  by its own login; the `aiNames` option adds more. Other people and chore bots (Dependabot and
+  the like) are kept out of both sides.
+- **You vs all AI, or you vs each AI.** One button folds every AI into one bar or splits them;
+  each AI has its own switch, so you can compare you against just Claude, for instance.
+- **It is a label, not a measurement of who typed the code.** "You" means a commit with no AI
+  marker, which includes AI work committed without one. Lines are added and removed in commits,
+  so a commit that rewrites an earlier one counts again.
+
+Merged PRs never change, so each is fetched once and kept (in the plugin's store, across
+sessions); opening Stats again only asks for what is new. The first load of a long range can take
+a minute, and the pane says how far along it is.
+
+### Links
+
+Most text in the pane is a link: the repo name, each stepper step, the headline, PR lines,
+and the workflow runs in flight.
+
+| Click | Goes to |
+|---|---|
+| Repo name | The repo |
+| PR | The PR the stepper follows, else the repo's pull requests |
+| Build | That PR's checks, else the default branch's workflow runs |
+| Merged | The default branch's commits |
+| Released | The latest release, else the releases page |
+| Headline | The PR for a conflict or draft, otherwise the build page |
+| A run in flight | That workflow run |
+
+The engine refuses a whole pane if one link target is malformed, so every URL is checked
+first (`https:`, printable ASCII, no `@`, spaces or dot segments). A URL that fails the check
+just shows as plain text.
+
 ## Requirements
 
 - Claude Code with function-hook plugins (the desktop Code tab or the CLI).
@@ -71,6 +123,7 @@ or for sessions the desktop app starts, set `CLAUDE_CODE_PLUGIN_DIRS` (and
 | `staleDays` | `14` | A repo with no push or PR activity for this long, and nothing building, moves to a collapsed Stale group (`s` toggles it). |
 | `autoFix` | `false` | When a default-branch build goes from running to failing, queue a prompt in the session asking Claude to find the cause and open a fix PR (never a direct push). Starts its own turn once the session is idle. |
 | `autoFixLimit` | `5` | Most fix prompts per session; one per failing commit. |
+| `aiNames` | empty | Extra names to count as AI in Stats, comma-separated, besides the ones recognized automatically. |
 | `includeForks` | `false` | Also track forks. |
 | `ignoreRepos` | empty | Comma-separated repo names to skip. |
 | `githubToken` | empty | Fallback when `gh` can't run. Needs read access to repos. |
@@ -80,19 +133,30 @@ Archived repos are always skipped.
 ## Layout
 
 ```
+src/core/                    the logic, written once (see src/core/README.md): what each repo's
+                             state is, who commits are attributed to, what to fetch, the caching.
+                             Knows nothing about its host, so any front end can use it.
+hooks/register.tsx           the Claude pane: wires the core to the engine (process, HTTP, store,
+                             state) and paints it. The only place the engine's `$` appears.
 .claude-plugin/plugin.json   manifest and options
-hooks/register.tsx           pane, polling loop, command, toasts
-hooks/analyze.ts             pure logic: repo -> stepper position, transitions
-hooks/github.ts              GitHub access through injected gh/HTTP callbacks
-types/index.d.ts             the shape of the board kept in session state
+types/index.d.ts             the engine's state contract; GENERATED from src/core/types.ts
+scripts/sync-contract.mjs    writes (or --check verifies) that file
 ```
+
+The split is deliberate: Shipwatch is meant to have more than one outlet (the pane today; a web
+report or an app would share `src/core` unchanged). Logic belongs in the core; a front end only
+supplies how to reach GitHub and how to draw.
 
 Check and test with:
 
 ```bash
 claude plugin validate .
 claude plugin test .
+node scripts/sync-contract.mjs --check                          # contract matches the core's types
+npx -p typescript tsc --noEmit -p src/core/tsconfig.json        # the core stays pure
 ```
+
+The last two run in CI too (`.github/workflows/checks.yml`).
 
 ## Limits
 

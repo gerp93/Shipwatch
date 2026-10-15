@@ -13,6 +13,6 @@ on:
 
 jobs:
   ci:
-    uses: gerp93/KVG_Standards/.github/workflows/ci-claude-plugin.yml@claude/claude-plugin-standard
+    uses: gerp93/KVG_Standards/.github/workflows/ci-claude-plugin.yml@main
     # with:
     #   plugin_dir: .   # only if the plugin isn't at the repo root

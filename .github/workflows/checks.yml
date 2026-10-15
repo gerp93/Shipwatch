@@ -1,0 +1,34 @@
+name: Checks
+
+# Repo-specific checks the shared plugin CI (ci.yml: validate + test) does not cover. Both need only
+# Node, and neither needs the Claude CLI or its engine types.
+#
+# 1. The engine's state contract (types/index.d.ts) is generated from the core's types; it must not drift.
+# 2. The core (src/core) must stay pure: it is typechecked against the bare language, so a Node, DOM or
+#    engine API slipping in fails here. That is what lets every outlet (the Claude pane, a web report, an
+#    app) share it.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: State contract is in sync with the core's types
+        run: node scripts/sync-contract.mjs --check
+
+      - name: Core is pure (typechecks with no host APIs)
+        run: npx --yes -p typescript@5 tsc --noEmit -p src/core/tsconfig.json

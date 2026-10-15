@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { analyze, failedOnMain, fixPrompt, snapshot, transitions } from './analyze'
+import { analyze, checksOf, failedOnMain, fixPrompt, isInfraMessage, markInfra, snapshot, transitions } from './analyze'
 import type { RawRepo } from './analyze'
 
 const NOW = Date.parse('2026-10-05T12:00:00Z')
@@ -103,4 +103,69 @@ test('fixPrompt refuses names that could carry instructions', () => {
   expect(fixPrompt('o', { ...ok, name: 'app; rm -rf' })).toBeNull()
   expect(fixPrompt('o/../x', ok)).toBeNull()
   expect(fixPrompt('o', { ...ok, headOid: 'zz' })).toBeNull()
+})
+
+test('runner-outage annotations are told apart from real failures', () => {
+  expect(isInfraMessage('The job was not acquired by Runner of type hosted even after multiple attempts')).toBe(true)
+  expect(isInfraMessage('The hosted runner lost communication with the server.')).toBe(true)
+  expect(isInfraMessage('Process completed with exit code 1.')).toBe(false)
+})
+
+test('markInfra relabels only a failing main build, and keeps it out of auto-fix', () => {
+  const running = [analyze(repo({ head: 'PENDING' }), NOW, 6 * HOUR)]
+  const failing = analyze(repo({ head: 'FAILURE' }), NOW, 6 * HOUR)
+  const infra = markInfra(failing, true)
+  expect(infra.isInfra).toBe(true)
+  expect(infra.headline).toContain('runner outage')
+  expect(markInfra(failing, false)).toEqual(failing)
+  expect(failedOnMain(snapshot(running), [infra])).toEqual([])
+  expect(failedOnMain(snapshot(running), [failing]).length).toBe(1)
+})
+
+const run = (status: string, conclusion: string | null = null) => ({ status, conclusion })
+const rollup = (state: string, ...nodes: Array<ReturnType<typeof run> | { state: string }>) => ({ state, contexts: { nodes } })
+
+test('checksOf reads the individual checks: cancelled and skipped runs are not failures', () => {
+  // GitHub's combined state says FAILURE for runs a newer push cancelled; nothing actually failed.
+  expect(checksOf(rollup('FAILURE', run('COMPLETED', 'CANCELLED'), run('COMPLETED', 'CANCELLED'), run('COMPLETED', 'SKIPPED')))).toBe('none')
+  expect(checksOf(rollup('FAILURE', run('COMPLETED', 'SUCCESS'), run('COMPLETED', 'CANCELLED')))).toBe('passing')
+  expect(checksOf(rollup('FAILURE', run('COMPLETED', 'FAILURE'), run('COMPLETED', 'CANCELLED')))).toBe('failing')
+  expect(checksOf(rollup('FAILURE', run('COMPLETED', 'TIMED_OUT')))).toBe('failing')
+  expect(checksOf(rollup('PENDING', run('IN_PROGRESS'), run('COMPLETED', 'SUCCESS')))).toBe('running')
+  expect(checksOf(rollup('FAILURE', run('QUEUED'), run('COMPLETED', 'FAILURE')))).toBe('failing')
+  expect(checksOf(rollup('SUCCESS', { state: 'SUCCESS' }))).toBe('passing')
+  expect(checksOf(rollup('ERROR', { state: 'ERROR' }))).toBe('failing')
+})
+
+test('checksOf falls back to the combined state when no individual checks came back', () => {
+  expect(checksOf({ state: 'FAILURE' })).toBe('failing')
+  expect(checksOf({ state: 'SUCCESS', contexts: { nodes: [] } })).toBe('passing')
+  expect(checksOf(null)).toBe('none')
+})
+
+test('a draft PR never outranks a real one, and its failing checks do not make the repo fail', () => {
+  const failingDraft = pr('FAILURE', { number: 6, isDraft: true })
+  const passingReal = pr('SUCCESS', { number: 9 })
+  const mixed = analyze(repo({ pullRequests: { nodes: [failingDraft, passingReal] } }), NOW, 6 * HOUR)
+  expect(mixed.level).toBe('ready')
+  expect(mixed.headline).toBe('#9 ready to merge')
+  expect(mixed.prs.map(p => p.number)).toEqual([9, 6])
+
+  const onlyDraft = analyze(repo({ pullRequests: { nodes: [failingDraft] } }), NOW, 6 * HOUR)
+  expect(onlyDraft.level).toBe('draft')
+  expect(onlyDraft.headline).toBe('#6 draft')
+  const several = analyze(repo({ pullRequests: { nodes: [failingDraft, pr('SUCCESS', { number: 8, isDraft: true })] } }), NOW, 6 * HOUR)
+  expect(several.headline).toBe('2 draft PRs')
+})
+
+test('with only drafts open, a broken or building default branch still shows as itself', () => {
+  const draft = pr('SUCCESS', { number: 6, isDraft: true })
+  expect(analyze(repo({ head: 'FAILURE', pullRequests: { nodes: [draft] } }), NOW, 6 * HOUR).headline).toBe('main build failing')
+  expect(analyze(repo({ head: 'PENDING', pullRequests: { nodes: [draft] } }), NOW, 6 * HOUR).level).toBe('running')
+})
+
+test('a draft whose build finishes is not announced', () => {
+  const was = [analyze(repo({ pullRequests: { nodes: [pr('PENDING', { number: 6, isDraft: true })] } }), NOW, 6 * HOUR)]
+  const now = [analyze(repo({ pullRequests: { nodes: [pr('FAILURE', { number: 6, isDraft: true })] } }), NOW, 6 * HOUR)]
+  expect(transitions(snapshot(was), now)).toEqual([])
 })
