@@ -8,6 +8,7 @@ import { barsSvg, chartColor, donutSvg, legendSvg, weeksSvg } from '../core/char
 import type { ReportData } from '../core/report'
 import { RANGES, YOU, aggregate, aisIn, compact, reposCreatedSince, sinceFor } from '../core/stats'
 import type { Level, PrView, RepoView, StatsMode } from '../core/types'
+import { clockPanel } from './clockPanel'
 
 const data = (window as unknown as { SHIPWATCH_DATA: ReportData }).SHIPWATCH_DATA
 
@@ -136,6 +137,7 @@ function dashboard(): HTMLElement {
   return el(
     'section',
     {},
+    clockPanel(data.board.repos),
     el(
       'div',
       { class: 'row wrap' },
