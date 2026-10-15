@@ -1,6 +1,7 @@
 import type { Access, IO, Store } from './ports'
-import { RATE_LIMITED, rateLimitMessage } from './budget'
-import { fetchGraphqlReset } from './github'
+import { RATE_LIMITED, RESERVE_FRACTION, adviseOnLimit, reserveMessage } from './budget'
+import type { Budget } from './budget'
+import { fetchGraphqlLimit } from './github'
 import { dateOf, earliestKnown, mergeById, planFetch, rangeSince, summarizePr } from './stats'
 import { fetchMergedPrs, fetchReposCreated, fetchViewerLogin } from './statsFetch'
 import type { PrSummary, RepoCreated, StatsBoard } from './types'
@@ -59,9 +60,11 @@ export type StatsDeps = {
   wait?: (ms: number) => Promise<void>
 }
 
-/** A pause when GitHub says to slow down and does not say until when. */
-const RATE_LIMIT_PAUSE_MS = 60_000
 const RATE_LIMIT_TRIES = 4
+/** Spacing between history requests: at least this, and longer for a request that cost a lot (about 1,200 points a minute). */
+const MIN_GAP_MS = 300
+const MAX_GAP_MS = 8_000
+const MS_PER_POINT = 50
 /** The longest wait for an allowance reset; a longer one ends the load, which resumes from what is kept. */
 const RATE_LIMIT_MAX_WAIT_MS = 20 * 60_000
 
@@ -73,9 +76,36 @@ const RATE_LIMIT_MAX_WAIT_MS = 20 * 60_000
 export const refreshStats = async (deps: StatsDeps, s: StatsBoard): Promise<StatsCache> => {
   const { io, access, store, owner, aiNames, now } = deps
   deps.onProgress?.('Starting...')
-  const you = s.you || (await fetchViewerLogin(io, access))
+
+  /**
+   * Runs one request, and when GitHub refuses it for rate limiting says which limit it was and waits it out: a
+   * short-term burst limit clears in a minute or two; the hourly allowance, at its reset, if that is soon. Past a
+   * few tries, or for a reset too far off, it stops with an explanation (what has been kept stays).
+   */
+  const guarded = async <T>(where: string, op: () => Promise<T>): Promise<T> => {
+    for (let attempt = 1; ; attempt++) {
+      try {
+        return await op()
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err)
+        if (!deps.wait || !RATE_LIMITED.test(message)) throw err
+        const limit = await fetchGraphqlLimit(io, access)
+        const advice = adviseOnLimit(limit, Date.now())
+        if (!advice.burst && advice.retryInMs > RATE_LIMIT_MAX_WAIT_MS) throw new Error(advice.message)
+        if (attempt >= RATE_LIMIT_TRIES) throw new Error(advice.message)
+        deps.onProgress?.(
+          advice.burst
+            ? `GitHub is briefly slowing requests; trying again in ${Math.round(advice.retryInMs / 1000)} s (try ${attempt} of ${RATE_LIMIT_TRIES - 1}) ${where}...`
+            : `GitHub's hourly allowance is used up; waiting ${Math.ceil(advice.retryInMs / 60_000)} min for it to reset ${where}...`,
+        )
+        await deps.wait(advice.retryInMs)
+      }
+    }
+  }
+
+  const you = s.you || (await guarded('looking up your account', () => fetchViewerLogin(io, access)))
   // The repos come first: an all-time range starts at the oldest of them.
-  const repos = await fetchReposCreated(io, access, owner)
+  const repos = await guarded('reading your repos', () => fetchReposCreated(io, access, owner))
   const plan = planFetch(s.coveredFrom, s.coveredThrough, now, rangeSince(s.range, now, earliestKnown(repos, s.prs)))
   const yesterday = dateOf(now - 86_400_000)
   let prs = s.prs
@@ -94,29 +124,15 @@ export const refreshStats = async (deps: StatsDeps, s: StatsBoard): Promise<Stat
     const w = ordered[i]!
     const progress = (loaded: number, total: number): void =>
       deps.onProgress?.(`Loading merged PRs ${w.from} to ${w.to}: ${loaded} of ${total} (part ${i + 1} of ${ordered.length})`)
-    let raw: Awaited<ReturnType<typeof fetchMergedPrs>>
-    for (let attempt = 1; ; attempt++) {
-      try {
-        raw = await fetchMergedPrs(io, access, owner, w.from, w.to, progress)
-        break
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err)
-        if (!deps.wait || !RATE_LIMITED.test(message)) throw err
-        // The hourly allowance resets at a known time: wait for it if that is soon, else stop (what is kept stays).
-        const resetAt = await fetchGraphqlReset(io, access)
-        const untilReset = resetAt ? resetAt - Date.now() : undefined
-        if (untilReset !== undefined && untilReset > RATE_LIMIT_MAX_WAIT_MS) throw new Error(rateLimitMessage(resetAt, Date.now()))
-        // However it is told, give up after a few tries rather than wait for ever on a limit that does not lift.
-        if (attempt >= RATE_LIMIT_TRIES) throw err
-        const pause = untilReset !== undefined && untilReset > 0 ? untilReset + 5_000 : RATE_LIMIT_PAUSE_MS
-        deps.onProgress?.(
-          untilReset !== undefined && untilReset > 0
-            ? `GitHub's hourly allowance is used up; waiting ${Math.ceil(pause / 60_000)} min for it to reset, at ${w.from} to ${w.to}...`
-            : `GitHub asked us to slow down; waiting a minute (try ${attempt} of ${RATE_LIMIT_TRIES - 1}) at ${w.from} to ${w.to}...`,
-        )
-        await deps.wait(pause)
-      }
-    }
+    let spent = 0
+    let last: Budget | undefined
+    const raw = await guarded(`at ${w.from} to ${w.to}`, async () => {
+      spent = 0
+      return fetchMergedPrs(io, access, owner, w.from, w.to, progress, b => {
+        spent += b.cost
+        last = b
+      })
+    })
     prs = mergeById(prs, raw.map(r => summarizePr(r, you, aiNames)))
     // Coverage grows from what is held outwards, so it is always one unbroken stretch.
     if (!cover.from || !cover.through) cover = { from: w.from, through: yesterday }
@@ -125,6 +141,19 @@ export const refreshStats = async (deps: StatsDeps, s: StatsBoard): Promise<Stat
     deps.onPartial?.(prs, you, repos)
     // Keep what has arrived, so a failure further back loses nothing already fetched.
     if (raw.length > 0) await save()
+
+    // Pace the next request by what this one cost, so a long load does not trip GitHub's short-term limit
+    // (a burst of heavy requests is refused even with hourly allowance left), and never spend the reserve.
+    if (deps.wait && last && i < ordered.length - 1) {
+      const b: Budget = last
+      await deps.wait(Math.min(MAX_GAP_MS, Math.max(MIN_GAP_MS, spent * MS_PER_POINT)))
+      if (b.remaining - b.limit * RESERVE_FRACTION < b.cost * 2) {
+        const untilReset = b.resetAt - Date.now()
+        if (untilReset > RATE_LIMIT_MAX_WAIT_MS || !(untilReset > 0)) throw new Error(reserveMessage(b.resetAt, Date.now()))
+        deps.onProgress?.(`Pausing to keep part of GitHub's hourly allowance free for your other tools; resuming in ${Math.ceil(untilReset / 60_000)} min...`)
+        await deps.wait(untilReset + 5_000)
+      }
+    }
   }
   const cache: StatsCache = { prs, repos, you, coveredFrom: plan.coveredFrom, coveredThrough: plan.coveredThrough }
   await save()

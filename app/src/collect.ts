@@ -4,8 +4,8 @@
 
 import { buildBoard } from '../../src/core/boardService'
 import type { InfraVerdicts } from '../../src/core/boardService'
-import { isRateLimit, rateLimitMessage } from '../../src/core/budget'
-import { connect, fetchGraphqlReset, resolveOwner } from '../../src/core/github'
+import { adviseOnLimit, isRateLimit } from '../../src/core/budget'
+import { connect, fetchGraphqlLimit, resolveOwner } from '../../src/core/github'
 import type { IO, Store } from '../../src/core/ports'
 import type { ReportData } from '../../src/core/report'
 import { ALL_TIME } from '../../src/core/stats'
@@ -50,37 +50,51 @@ export type CollectDeps = {
 /** What the first step learned: who, and their repos as the dashboard shows them. */
 export type DashboardRead = { owner: string; repos: RepoView[]; access: Access }
 
-/** A rate-limit failure said plainly, with when the allowance comes back; anything else as it was. */
+/** A rate-limit failure said plainly, which limit it was and when to try again; anything else as it was. */
 const explain = async (io: IO, access: Access, err: unknown): Promise<Error> => {
   const message = err instanceof Error ? err.message : String(err)
-  if (isRateLimit(message)) return new Error(rateLimitMessage(await fetchGraphqlReset(io, access), Date.now()))
+  if (isRateLimit(message)) return new Error(adviseOnLimit(await fetchGraphqlLimit(io, access), Date.now()).message)
   return err instanceof Error ? err : new Error(message)
 }
 
-/** Step one: the dashboard. Fast, and enough to show the window. Throws a message that says what to fix. */
+const sleep = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms))
+const DASHBOARD_TRIES = 4
+
+/**
+ * Step one: the dashboard. Fast, and enough to show the window. A short-term burst limit (GitHub slowing
+ * requests while the hourly allowance still has points) is waited out a few times; anything else throws a
+ * message that says what happened.
+ */
 export const collectDashboard = async (deps: CollectDeps): Promise<DashboardRead> => {
   const { io, config, now } = deps
   deps.onProgress?.('Connecting to GitHub...')
   const access = await connect(io, config.token)
-  try {
-    const owner = await resolveOwner(io, access, config.owner)
-    deps.onProgress?.('Reading repos...')
-    const repos = await buildBoard(
-      io,
-      access,
-      {
-        owner,
-        count: config.count,
-        includeForks: config.includeForks,
-        ignore: new Set(config.ignore.map(n => n.toLowerCase())),
-        staleMs: config.staleDays * DAY_MS,
-      },
-      now,
-      deps.infraVerdicts,
-    )
-    return { owner, repos, access }
-  } catch (err) {
-    throw await explain(io, access, err)
+  for (let attempt = 1; ; attempt++) {
+    try {
+      const owner = await resolveOwner(io, access, config.owner)
+      deps.onProgress?.('Reading repos...')
+      const repos = await buildBoard(
+        io,
+        access,
+        {
+          owner,
+          count: config.count,
+          includeForks: config.includeForks,
+          ignore: new Set(config.ignore.map(n => n.toLowerCase())),
+          staleMs: config.staleDays * DAY_MS,
+        },
+        now,
+        deps.infraVerdicts,
+      )
+      return { owner, repos, access }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      if (!isRateLimit(message)) throw err
+      const advice = adviseOnLimit(await fetchGraphqlLimit(io, access), Date.now())
+      if (!advice.burst || attempt >= DASHBOARD_TRIES) throw new Error(advice.message)
+      deps.onProgress?.(`GitHub is briefly slowing requests; trying again in ${Math.round(advice.retryInMs / 1000)} s (try ${attempt} of ${DASHBOARD_TRIES - 1})...`)
+      await sleep(advice.retryInMs)
+    }
   }
 }
 

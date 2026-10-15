@@ -184,7 +184,9 @@ The last two run in CI too (`.github/workflows/checks.yml`).
   as you: every open Claude session running Shipwatch (each polls on its own), the `gh` CLI, the app. Shipwatch reads
   how much is left after each poll, stretches the wait as it runs down, and never spends the last 30% (kept for your
   other tools and `gh pr create`); the pane says so ("Polling every N s...", "Paused until ..."). If GitHub refuses
-  anyway it says when the allowance resets and waits for that. Each extra open session still costs its own polls.
+  anyway it says which limit it was and waits for it: GitHub also has a short-term limit on how fast requests arrive (it
+  refuses a burst even with allowance left), which clears in a minute or two, so the history load spaces its requests by
+  what each cost and retries a refused one after about 90 seconds; the hourly limit it waits out until the reset. Each extra open session still costs its own polls.
 
 ## Standards
 
