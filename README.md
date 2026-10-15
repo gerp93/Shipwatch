@@ -25,6 +25,7 @@ release. With several apps going at once it answers "which of these is waiting o
 - **Toasts** when a build passes or fails, and when a new release is published.
 - **Auto-fix (opt-in)**: a broken default-branch build can wake an idle session with a
   fix request, so a failure after an auto-merge doesn't wait for you to notice.
+- **A ship clock** on the report and in the standalone app: an analog clock driven by the board. The hour hand points at the repo that most needs you, the minute hand shows how far it is from PR to release, and the second hand is red while a build is failing.
 - **Adaptive polling**: every 20 s while something builds, every 60 s otherwise.
   Press `r` in the pane to refresh now.
 
@@ -215,6 +216,16 @@ repo), which takes a few minutes; later runs fetch only what is new.
 The report has a theme picker: the [VisualAssault](https://github.com/gerp93/VisualAssault) themes, vendored at a pinned
 tag into `src/core/themes.generated.ts` by `node scripts/update-visual-assault-css.mjs <tag>` (CI checks the file matches its tag).
 Icons are generated from `assets/logo.png` by `npm run icons` in `app/`.
+
+**Merging.** In the app (not in the Claude pane, and not in a report opened in a browser), an open PR that could merge
+gets a **Merge** button in the report: a PR that is not a draft, has no conflict and no failing check. A PR whose checks
+are still running gets **Merge when checks pass**. Clicking asks GitHub about the PR right then, then shows a native
+confirmation (the page cannot answer it); only after you confirm does anything change. It merges a clean PR now, or turns
+on GitHub's auto-merge for one that is waiting; it never bypasses branch protection or required checks, and a refusal
+from GitHub is shown as is. The merge uses the repo's own preference (a merge commit, else squash, else rebase), and
+auto-merge needs "Allow auto-merge" turned on for the repo. The `gh` sign-in from `gh auth login` already covers it
+(its `repo` scope includes merging); a `GITHUB_TOKEN` fallback needs write access to pull requests and contents, where
+reading alone was enough before.
 
 The app is a second product in the same repo: see [KVG_Standards' claude-plugins.md](https://github.com/gerp93/KVG_Standards/blob/main/claude-plugins.md)
 ("A plugin with a companion app"). There is deliberately no `package.json` at the repo root. Releases: every push to

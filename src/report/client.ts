@@ -8,7 +8,8 @@ import { barsSvg, chartColor, donutSvg, legendSvg, linesSvg, weeksSvg } from '..
 import type { ReportData } from '../core/report'
 import { THEME_IDS } from '../core/themes.generated'
 import { RANGES, YOU, actorLabel, aggregate, aisIn, bucketFor, commitSeries, compact, earliestKnown, rangeLabel, rangeSince, reposCreatedSince } from '../core/stats'
-import type { Level, RepoView, StatsMode } from '../core/types'
+import type { Level, PrView, RepoView, StatsMode } from '../core/types'
+import { clockPanel } from './clockPanel'
 
 const data = (window as unknown as { SHIPWATCH_DATA: ReportData }).SHIPWATCH_DATA
 
@@ -87,6 +88,33 @@ const th = (label: string, key: string, sort: Sort, set: (key: string) => void):
 
 const compare = (x: string | number, y: string | number): number => (x < y ? -1 : x > y ? 1 : 0)
 
+/** Only the standalone app offers a way to act on a PR (its preload script adds this); a report opened in a browser has none. */
+const bridge = (window as unknown as { shipwatch?: { mergePr: (repo: string, number: number) => Promise<{ ok: boolean; message: string }> } }).shipwatch
+
+/**
+ * A Merge button for an open PR that could be merged: not a draft, no conflict, no failing check. The app asks
+ * the user to confirm and re-reads the PR from GitHub, so this is only the way in, not the decision.
+ */
+const mergeControl = (repo: string, p: PrView): Child => {
+  if (!bridge || p.isDraft || p.hasConflict || p.checks === 'failing') return null
+  const waiting = p.checks === 'running'
+  const note = el('span', { class: 'dim' })
+  const btn = el('button', { class: 'btn', title: waiting ? 'Merges when its checks pass' : 'Merge this PR' }, waiting ? 'Merge when checks pass' : 'Merge')
+  btn.addEventListener('click', async () => {
+    btn.setAttribute('disabled', '')
+    note.textContent = ' Working...'
+    let said = 'Could not reach the app.'
+    try {
+      said = (await bridge.mergePr(repo, p.number)).message
+    } catch {
+      // Keep the message above.
+    }
+    btn.removeAttribute('disabled')
+    note.textContent = ` ${said}`
+  })
+  return el('span', {}, ' ', btn, note)
+}
+
 // ---- Dashboard ---------------------------------------------------------------------------------------------
 
 function dashboard(): HTMLElement {
@@ -110,6 +138,7 @@ function dashboard(): HTMLElement {
   return el(
     'section',
     {},
+    clockPanel(data.board.repos),
     el(
       'div',
       { class: 'row wrap' },
@@ -156,7 +185,7 @@ function dashboard(): HTMLElement {
               {},
               ...(r.prs.length
                 ? r.prs.map(p =>
-                    el('div', {}, el('a', { href: p.url, target: '_blank', rel: 'noopener' }, `#${p.number}`), ` ${p.title}`, p.isDraft ? el('span', { class: 'dim' }, ' draft') : null),
+                    el('div', {}, el('a', { href: p.url, target: '_blank', rel: 'noopener' }, `#${p.number}`), ` ${p.title}`, p.isDraft ? el('span', { class: 'dim' }, ' draft') : null, mergeControl(r.name, p)),
                   )
                 : [el('span', { class: 'dim' }, '-')]),
             ),

@@ -2,10 +2,11 @@
 // the Electron shell around it: it reads GitHub through the core, writes the page to the user-data folder,
 // and shows it. All of what is shown, and how the numbers are worked out, is in the core.
 
-import { app, BrowserWindow, Menu, shell } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Menu, shell } from 'electron'
 import type { MenuItemConstructorOptions } from 'electron'
 import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { pathToFileURL } from 'node:url'
 
 import type { InfraVerdicts } from '../../src/core/boardService'
 import { renderReport } from '../../src/core/report'
@@ -13,6 +14,7 @@ import { renderReport } from '../../src/core/report'
 import { FileStore, nodeIO } from './adapters'
 import { collect } from './collect'
 import { readConfig } from './config'
+import { mergeFromReport } from './merge'
 import { errorPage, isSafeExternalUrl, loadingPage, progressFraction } from './pages'
 import { checkForUpdatesNow, setupAutoUpdater } from './updates'
 
@@ -21,6 +23,8 @@ const REPO_URL = 'https://github.com/gerp93/Shipwatch'
 let win: BrowserWindow | undefined
 let isRefreshing = false
 const infraVerdicts: InfraVerdicts = new Map()
+/** The account and open PRs (as `repo#number`) of the report on screen: the only PRs its Merge button may act on. */
+let onScreen: { owner: string; prs: Set<string> } | undefined
 
 const userFile = (name: string): string => join(app.getPath('userData'), name)
 /** Files shipped inside the app (the icons), beside the bundled code whether run from source or packaged. */
@@ -38,6 +42,16 @@ const readLogo = async (): Promise<string | undefined> => {
 /** Shows `html` in the window without a file or a network address behind it. */
 const showHtml = (html: string): Promise<void> => win!.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`)
 
+async function loadConfig(): Promise<ReturnType<typeof readConfig>> {
+  let file: unknown
+  try {
+    file = JSON.parse(await readFile(userFile('config.json'), 'utf8'))
+  } catch {
+    // No settings file: defaults.
+  }
+  return readConfig(file, process.env)
+}
+
 async function refresh(): Promise<void> {
   if (isRefreshing || !win) return
   isRefreshing = true
@@ -47,13 +61,7 @@ async function refresh(): Promise<void> {
       const fraction = progressFraction(text)
       void win?.webContents.executeJavaScript(`window.setProgress(${JSON.stringify(text)}, ${fraction ?? 'undefined'})`).catch(() => {})
     }
-    let file: unknown
-    try {
-      file = JSON.parse(await readFile(userFile('config.json'), 'utf8'))
-    } catch {
-      // No settings file: defaults.
-    }
-    const config = readConfig(file, process.env)
+    const config = await loadConfig()
     const { data, statsError } = await collect({
       io: nodeIO(),
       store: new FileStore(userFile('stats.json')),
@@ -62,6 +70,7 @@ async function refresh(): Promise<void> {
       infraVerdicts,
       onProgress: say,
     })
+    onScreen = { owner: data.board.owner, prs: new Set(data.board.repos.flatMap(r => r.prs.map(p => `${r.name}#${p.number}`))) }
     // The report is a real file, not a data: address, because years of history are too big for one.
     const page = userFile('report.html')
     await writeFile(page, renderReport({ ...data, logo: await readLogo() }), 'utf8')
@@ -105,13 +114,47 @@ function setupMenu(): void {
   Menu.setApplicationMenu(Menu.buildFromTemplate(template))
 }
 
+/** The report's Merge button: only the report itself may ask, and the user is asked before anything is merged. */
+function setupMerge(): void {
+  ipcMain.handle('shipwatch:merge', async (event, repo: unknown, number: unknown) => {
+    const isReport = event.senderFrame?.url === pathToFileURL(userFile('report.html')).href
+    if (!isReport || !win || !onScreen) return { ok: false, message: 'Merge is only available from the report.' }
+    const result = await mergeFromReport(
+      {
+        io: nodeIO(),
+        config: await loadConfig(),
+        owner: onScreen.owner,
+        known: onScreen.prs,
+        confirm: async q => {
+          const { response } = await dialog.showMessageBox(win!, {
+            type: 'question',
+            title: 'Shipwatch',
+            message: q.title,
+            detail: q.detail,
+            buttons: [q.action, 'Cancel'],
+            defaultId: 1,
+            cancelId: 1,
+            noLink: true,
+          })
+          return response === 0
+        },
+      },
+      repo,
+      number,
+    )
+    // GitHub changed, so the report on screen is stale: read it again.
+    if (result.changed) void refresh()
+    return { ok: result.ok, message: result.message }
+  })
+}
+
 function createWindow(): void {
   win = new BrowserWindow({
     width: 1180,
     height: 840,
     title: 'Shipwatch',
     icon: assetFile('icon.png'),
-    webPreferences: { contextIsolation: true, sandbox: true, nodeIntegration: false },
+    webPreferences: { contextIsolation: true, sandbox: true, nodeIntegration: false, preload: join(__dirname, 'preload.js') },
   })
 
   // Links in the report open in the user's browser, and only ordinary web links do.
@@ -150,6 +193,7 @@ if (!app.requestSingleInstanceLock()) {
   })
   void app.whenReady().then(() => {
     setupMenu()
+    setupMerge()
     createWindow()
     void refresh()
     setupAutoUpdater(() => win)
