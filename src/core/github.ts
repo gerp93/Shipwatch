@@ -1,6 +1,6 @@
 import { isInfraMessage } from './analyze'
 import type { RawRepo } from './analyze'
-import type { Budget, GraphqlLimit } from './budget'
+import type { ApiLimit, ApiLimits, Budget } from './budget'
 import type { Access, IO } from './ports'
 
 const QUERY = `
@@ -127,19 +127,23 @@ export const fetchRepos = async (
  * When the GraphQL allowance resets, epoch ms, or undefined if it cannot be told. This asks the REST
  * `rate_limit` endpoint, which GitHub does not count against any allowance, so it works when GraphQL is spent.
  */
-export const fetchGraphqlLimit = async (io: IO, access: Access): Promise<GraphqlLimit | undefined> => {
+export const fetchApiLimits = async (io: IO, access: Access): Promise<ApiLimits | undefined> => {
   try {
     const out = await rest(io, access, 'rate_limit')
-    const g = out?.resources?.graphql
-    if (!g || typeof g.reset !== 'number') return undefined
-    return { remaining: typeof g.remaining === 'number' ? g.remaining : undefined, resetAt: g.reset * 1000 }
+    const pick = (r: any): ApiLimit | undefined =>
+      r && typeof r.remaining === 'number' && typeof r.limit === 'number' && typeof r.reset === 'number'
+        ? { remaining: r.remaining, limit: r.limit, resetAt: r.reset * 1000 }
+        : undefined
+    const graphql = pick(out?.resources?.graphql)
+    const core = pick(out?.resources?.core)
+    return graphql || core ? { graphql, core } : undefined
   } catch {
     return undefined
   }
 }
 
-/** Just the reset time of `fetchGraphqlLimit`. */
-export const fetchGraphqlReset = async (io: IO, access: Access): Promise<number | undefined> => (await fetchGraphqlLimit(io, access))?.resetAt
+/** Just the GraphQL reset time of `fetchApiLimits`. */
+export const fetchGraphqlReset = async (io: IO, access: Access): Promise<number | undefined> => (await fetchApiLimits(io, access))?.graphql?.resetAt
 
 /** The workflow runs in flight on a repo: `workflow · branch`, and the run's page. */
 export const fetchActivity = async (

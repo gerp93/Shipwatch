@@ -1,7 +1,7 @@
 import type { Access, IO, Store } from './ports'
 import { RATE_LIMITED, RESERVE_FRACTION, adviseOnLimit, reserveMessage } from './budget'
 import type { Budget } from './budget'
-import { fetchGraphqlLimit } from './github'
+import { fetchApiLimits } from './github'
 import { dateOf, earliestKnown, mergeById, planFetch, rangeSince, summarizePr } from './stats'
 import { fetchMergedPrs, fetchReposCreated, fetchViewerLogin } from './statsFetch'
 import type { PrSummary, RepoCreated, StatsBoard } from './types'
@@ -78,9 +78,9 @@ export const refreshStats = async (deps: StatsDeps, s: StatsBoard): Promise<Stat
   deps.onProgress?.('Starting...')
 
   /**
-   * Runs one request, and when GitHub refuses it for rate limiting says which limit it was and waits it out: a
-   * short-term burst limit clears in a minute or two; the hourly allowance, at its reset, if that is soon. Past a
-   * few tries, or for a reset too far off, it stops with an explanation (what has been kept stays).
+   * Runs one request, and when GitHub refuses it for rate limiting says what GitHub reports (points left, when
+   * it resets) and waits until that reset. Past a few tries, or for a reset too far off, it stops and says so
+   * (what has been kept stays).
    */
   const guarded = async <T>(where: string, op: () => Promise<T>): Promise<T> => {
     for (let attempt = 1; ; attempt++) {
@@ -89,15 +89,10 @@ export const refreshStats = async (deps: StatsDeps, s: StatsBoard): Promise<Stat
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err)
         if (!deps.wait || !RATE_LIMITED.test(message)) throw err
-        const limit = await fetchGraphqlLimit(io, access)
-        const advice = adviseOnLimit(limit, Date.now())
-        if (!advice.burst && advice.retryInMs > RATE_LIMIT_MAX_WAIT_MS) throw new Error(advice.message)
-        if (attempt >= RATE_LIMIT_TRIES) throw new Error(advice.message)
-        deps.onProgress?.(
-          advice.burst
-            ? `GitHub is briefly slowing requests; trying again in ${Math.round(advice.retryInMs / 1000)} s (try ${attempt} of ${RATE_LIMIT_TRIES - 1}) ${where}...`
-            : `GitHub's hourly allowance is used up; waiting ${Math.ceil(advice.retryInMs / 60_000)} min for it to reset ${where}...`,
-        )
+        const advice = adviseOnLimit((await fetchApiLimits(io, access))?.graphql, Date.now())
+        // GitHub reports when it resets: wait for that if it is soon, else stop (what has been kept stays).
+        if (advice.retryInMs > RATE_LIMIT_MAX_WAIT_MS || attempt >= RATE_LIMIT_TRIES) throw new Error(advice.giveUp)
+        deps.onProgress?.(`${advice.message} (try ${attempt} of ${RATE_LIMIT_TRIES - 1}, ${where})`)
         await deps.wait(advice.retryInMs)
       }
     }

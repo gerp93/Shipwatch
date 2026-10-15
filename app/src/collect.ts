@@ -4,14 +4,19 @@
 
 import { buildBoard } from '../../src/core/boardService'
 import type { InfraVerdicts } from '../../src/core/boardService'
+import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
+import { dirname } from 'node:path'
+
 import { adviseOnLimit, isRateLimit } from '../../src/core/budget'
-import { connect, fetchGraphqlLimit, resolveOwner } from '../../src/core/github'
+import type { Budget } from '../../src/core/budget'
+import { connect, fetchApiLimits, resolveOwner } from '../../src/core/github'
+import { fetchRecentPrs } from '../../src/core/recent'
 import type { IO, Store } from '../../src/core/ports'
 import type { ReportData } from '../../src/core/report'
 import { ALL_TIME } from '../../src/core/stats'
 import { loadStatsCache, refreshStats } from '../../src/core/statsService'
 import type { Access } from '../../src/core/ports'
-import type { RepoView, StatsBoard } from '../../src/core/types'
+import type { RecentPr, RepoView, StatsBoard } from '../../src/core/types'
 
 import type { AppConfig } from './config'
 
@@ -47,54 +52,102 @@ export type CollectDeps = {
   onProgress?: (text: string) => void
 }
 
-/** What the first step learned: who, and their repos as the dashboard shows them. */
-export type DashboardRead = { owner: string; repos: RepoView[]; access: Access }
-
-/** A rate-limit failure said plainly, which limit it was and when to try again; anything else as it was. */
-const explain = async (io: IO, access: Access, err: unknown): Promise<Error> => {
-  const message = err instanceof Error ? err.message : String(err)
-  if (isRateLimit(message)) return new Error(adviseOnLimit(await fetchGraphqlLimit(io, access), Date.now()).message)
-  return err instanceof Error ? err : new Error(message)
+/** What the first step learned: who, their repos as the dashboard shows them, and the PRs opened in the last hour. */
+export type DashboardRead = {
+  owner: string
+  repos: RepoView[]
+  /** Absent when the (best-effort) read of the last hour's PRs failed. */
+  recent?: RecentPr[]
+  /** What GitHub's GraphQL allowance had left after the read, for pacing the next one. */
+  budget?: Budget
+  access: Access
 }
 
-const sleep = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms))
-const DASHBOARD_TRIES = 4
+/**
+ * A request GitHub refused for rate limiting. The message is what GitHub's rate-limit status reports (points
+ * left, the reset time) and `retryInMs` is the time until that reset, when the caller should ask again.
+ */
+export class RateLimited extends Error {
+  constructor(
+    message: string,
+    readonly retryInMs: number,
+  ) {
+    super(message)
+  }
+}
+
+/** A rate-limit failure turned into one that carries when to try again; anything else as it was. */
+const explain = async (io: IO, access: Access, err: unknown): Promise<Error> => {
+  const message = err instanceof Error ? err.message : String(err)
+  if (!isRateLimit(message)) return err instanceof Error ? err : new Error(message)
+  const advice = adviseOnLimit((await fetchApiLimits(io, access))?.graphql, Date.now())
+  return new RateLimited(advice.message, advice.retryInMs)
+}
+
+export const HOUR_MS = 60 * 60_000
 
 /**
- * Step one: the dashboard. Fast, and enough to show the window. A short-term burst limit (GitHub slowing
- * requests while the hourly allowance still has points) is waited out a few times; anything else throws a
- * message that says what happened.
+ * Step one: the dashboard. Fast. When GitHub refuses a read for rate limiting this throws `RateLimited`, saying
+ * what GitHub's status reports and when it resets, so the caller can show that and ask again then. The last
+ * hour's PRs are read too, best effort.
  */
 export const collectDashboard = async (deps: CollectDeps): Promise<DashboardRead> => {
   const { io, config, now } = deps
   deps.onProgress?.('Connecting to GitHub...')
   const access = await connect(io, config.token)
-  for (let attempt = 1; ; attempt++) {
+  try {
+    const owner = await resolveOwner(io, access, config.owner)
+    deps.onProgress?.('Reading repos...')
+    let budget: Budget | undefined
+    const repos = await buildBoard(
+      io,
+      access,
+      {
+        owner,
+        count: config.count,
+        includeForks: config.includeForks,
+        ignore: new Set(config.ignore.map(n => n.toLowerCase())),
+        staleMs: config.staleDays * DAY_MS,
+        onBudget: b => void (budget = b),
+      },
+      now,
+      deps.infraVerdicts,
+    )
+    let recent: RecentPr[] | undefined
     try {
-      const owner = await resolveOwner(io, access, config.owner)
-      deps.onProgress?.('Reading repos...')
-      const repos = await buildBoard(
-        io,
-        access,
-        {
-          owner,
-          count: config.count,
-          includeForks: config.includeForks,
-          ignore: new Set(config.ignore.map(n => n.toLowerCase())),
-          staleMs: config.staleDays * DAY_MS,
-        },
-        now,
-        deps.infraVerdicts,
-      )
-      return { owner, repos, access }
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err)
-      if (!isRateLimit(message)) throw err
-      const advice = adviseOnLimit(await fetchGraphqlLimit(io, access), Date.now())
-      if (!advice.burst || attempt >= DASHBOARD_TRIES) throw new Error(advice.message)
-      deps.onProgress?.(`GitHub is briefly slowing requests; trying again in ${Math.round(advice.retryInMs / 1000)} s (try ${attempt} of ${DASHBOARD_TRIES - 1})...`)
-      await sleep(advice.retryInMs)
+      recent = await fetchRecentPrs(io, access, owner, now - HOUR_MS, b => void (budget = b))
+    } catch {
+      // The clock's rim is a bonus; the dashboard does not wait on it.
     }
+    return { owner, repos, recent, budget, access }
+  } catch (err) {
+    throw await explain(io, access, err)
+  }
+}
+
+/** What the app keeps of the last dashboard it read, so the next start can show it at once. */
+export type SavedDashboard = { owner: string; repos: RepoView[]; recent?: RecentPr[]; at: number }
+
+/** The dashboard saved by an earlier run, or undefined if there is none or it is not readable. */
+export const loadSavedDashboard = async (path: string): Promise<SavedDashboard | undefined> => {
+  try {
+    const v = JSON.parse(await readFile(path, 'utf8')) as Partial<SavedDashboard> | null
+    if (!v || typeof v.owner !== 'string' || !Array.isArray(v.repos) || typeof v.at !== 'number') return undefined
+    return { owner: v.owner, repos: v.repos, recent: Array.isArray(v.recent) ? v.recent : undefined, at: v.at }
+  } catch {
+    return undefined
+  }
+}
+
+/** Keeps the dashboard for the next start; a failure to write is not worth stopping for. */
+export const saveDashboard = async (path: string, dashboard: SavedDashboard): Promise<void> => {
+  try {
+    await mkdir(dirname(path), { recursive: true })
+    const tmp = `${path}.tmp`
+    await writeFile(tmp, JSON.stringify(dashboard), 'utf8')
+    await rename(tmp, path)
+  } catch {
+    // The next start just has nothing saved to show.
   }
 }
 

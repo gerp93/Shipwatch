@@ -8,7 +8,8 @@ import type { IO } from '../../src/core/ports'
 
 import { FileStore, nodeIO } from './adapters'
 import { readConfig } from './config'
-import { setStatsScript, setStatusScript, throttled } from './live'
+import { loadSavedDashboard, saveDashboard } from './collect'
+import { setApiScript, setBoardScript, setBoardStatusScript, setRecentScript, setStatsScript, setStatusScript, throttled } from './live'
 import { mergeFromReport } from './merge'
 import type { Question } from './merge'
 import { errorPage, isSafeExternalUrl, loadingPage, progressFraction } from './pages'
@@ -211,4 +212,41 @@ test('the throttle passes the first value, drops those inside the gap, and passe
   now += 200
   send(4)
   assert.deepEqual(sent, [1, 4])
+})
+
+test('the dashboard saved last time comes back for the next start, and a missing or damaged file is simply nothing', async () => {
+  const path = await tempFile('board.json')
+  assert.equal(await loadSavedDashboard(path), undefined) // nothing saved yet: the very first start
+  const repos = [{ name: 'app', url: 'https://github.com/o/app', level: 'idle', steps: ['done', 'done', 'done', 'done'], prs: [], headline: 'up to date' }] as never
+  const recent = [{ repo: 'app', number: 3, title: 't', url: 'https://github.com/o/app/pull/3', createdAt: '2026-10-15T14:00:00Z', state: 'open', isDraft: false, checks: 'none', mergedAt: null }] as never
+  await saveDashboard(path, { owner: 'me', repos, recent, at: 1_700_000_000_000 })
+  const back = await loadSavedDashboard(path)
+  assert.equal(back?.owner, 'me')
+  assert.equal(back?.at, 1_700_000_000_000)
+  assert.equal(back?.repos.length, 1)
+  assert.equal(back?.recent?.length, 1)
+
+  for (const bad of ['{ not json', '[]', '{"owner":1,"repos":[],"at":1}', '{"owner":"me","repos":"x","at":1}', '{"owner":"me","repos":[]}']) {
+    await writeFile(path, bad, 'utf8')
+    assert.equal(await loadSavedDashboard(path), undefined, bad)
+  }
+  // Saving where nothing can be written does not throw: the next start just has nothing to show.
+  await saveDashboard(join(path, 'inside-a-file', 'board.json'), { owner: 'me', repos: [], at: 1 })
+})
+
+test('everything handed to the page while it is open is a literal that cannot end the script early', () => {
+  const nasty = '</script><img src=x onerror=alert(1)> '
+  const board = { owner: nasty, repos: [] }
+  for (const script of [
+    setBoardScript(board, 1, undefined),
+    setBoardStatusScript({ state: 'error', text: nasty }),
+    setRecentScript([{ repo: nasty, number: 1, title: nasty, url: 'https://x', createdAt: 'x', state: 'open', isDraft: false, checks: 'none', mergedAt: null }]),
+    setApiScript({ graphql: { remaining: 1, limit: 5000, resetAt: 1 } }),
+  ]) {
+    assert.ok(script.startsWith('window.shipwatchLive&&window.shipwatchLive.set'))
+    assert.ok(!script.includes('</script'))
+    assert.ok(!script.includes(' '))
+  }
+  assert.ok(setBoardScript(board, 7, undefined).endsWith(',7,null)')) // no recent list: the page keeps the one it has
+  assert.equal(setBoardStatusScript(null), 'window.shipwatchLive&&window.shipwatchLive.setBoardStatus(null)')
 })

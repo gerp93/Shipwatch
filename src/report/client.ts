@@ -71,8 +71,9 @@ const raw = (html: string): HTMLElement => {
   return box
 }
 
+/** How long ago, as of now (not as of when the data was read, which may have been saved a while back). */
 const ago = (iso: string): string => {
-  const ms = data.generatedAt - Date.parse(iso)
+  const ms = Date.now() - Date.parse(iso)
   if (!Number.isFinite(ms) || ms < 0) return ''
   const m = Math.floor(ms / 60000)
   if (m < 60) return `${Math.max(1, m)}m ago`
@@ -138,7 +139,7 @@ function dashboard(): HTMLElement {
   return el(
     'section',
     {},
-    clockPanel(data.board.repos),
+    clockPanel(() => data.recentPrs),
     el(
       'div',
       { class: 'row wrap' },
@@ -222,8 +223,24 @@ function commitsOverTime(agg: ReturnType<typeof aggregate>, sinceMs: number, col
 type Status = NonNullable<ReportData['statsStatus']>
 
 /** Fills the notice for `st`: what is happening, a bar while it loads, and what is held so far. */
-function fillBanner(box: HTMLElement, st: Status): void {
+function fillBanner(box: HTMLElement, st: Status, kind: 'stats' | 'board' = 'stats'): void {
   box.className = st.state === 'error' ? 'banner bad' : 'banner'
+  if (kind === 'board') {
+    // The dashboard on screen is the one saved last time; this says so, and what is happening about it.
+    const saved = `Showing what was saved ${new Date(data.generatedAt).toLocaleString()}.`
+    if (st.state === 'error') {
+      box.replaceChildren(
+        el('strong', {}, 'Could not update from GitHub'),
+        el('div', {}, st.text),
+        el('div', { class: 'dim' }, `${saved} It will try again by itself.`),
+      )
+      return
+    }
+    const bar = el('div', { class: 'meter' }, el('div'))
+    bar.setAttribute('data-indeterminate', '1')
+    box.replaceChildren(el('strong', {}, 'Updating from GitHub...'), el('div', { class: 'dim' }, st.text || 'Starting...'), bar, el('div', { class: 'dim' }, saved))
+    return
+  }
   const held = data.stats.prs.reduce((min, p) => (p.mergedAt < min ? p.mergedAt : min), '9999')
   const heldNote = data.stats.prs.length > 0 ? `Showing what is saved so far (back to ${held.slice(0, 10)}).` : 'Nothing is saved yet.'
   if (st.state === 'error') {
@@ -243,6 +260,46 @@ function fillBanner(box: HTMLElement, st: Status): void {
     meter,
     el('div', { class: 'dim' }, `${heldNote} Longer ranges fill in as it goes; it only reads what it does not already have.`),
   )
+}
+
+/** The notice under the header while the dashboard shown is a saved one being updated, or its update failed. */
+function boardBanner(): HTMLElement | null {
+  const st = data.boardStatus
+  if (!st) return null
+  const box = el('div', { id: 'board-banner' })
+  fillBanner(box, st, 'board')
+  return box
+}
+
+// ---- GitHub allowance readout ------------------------------------------------------------------------------
+// A small chip in the header: how many of GitHub's GraphQL points are left, so it is easy to see if something is
+// using them up. The app reads it from the endpoint that costs nothing, every half minute.
+
+/** The first reading of this hour's allowance seen by this page, to say how many points were used since. */
+let apiBaseline: { resetAt: number; remaining: number } | undefined
+
+function apiChipText(): { text: string; tone: string; title: string } | null {
+  const g = data.api?.graphql
+  if (!g) return null
+  if (!apiBaseline || apiBaseline.resetAt !== g.resetAt || g.remaining > apiBaseline.remaining) apiBaseline = { resetAt: g.resetAt, remaining: g.remaining }
+  const used = apiBaseline.remaining - g.remaining
+  const share = g.limit > 0 ? g.remaining / g.limit : 1
+  const reset = new Date(g.resetAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+  const core = data.api?.core
+  return {
+    text: `GitHub API ${g.remaining.toLocaleString()} / ${g.limit.toLocaleString()}${used > 0 ? ` · −${used.toLocaleString()} since opened` : ''}`,
+    tone: share < 0.1 ? 'critical' : share < 0.3 ? 'low' : 'ok',
+    title:
+      `GraphQL points left this hour: ${g.remaining.toLocaleString()} of ${g.limit.toLocaleString()}, resetting at ${reset}.` +
+      (core ? ` REST: ${core.remaining.toLocaleString()} of ${core.limit.toLocaleString()}.` : '') +
+      ' Read from GitHub every 30 seconds without using any points.',
+  }
+}
+
+function apiChip(): HTMLElement | null {
+  const c = apiChipText()
+  if (!c) return null
+  return el('span', { class: `chip-api ${c.tone}`, id: 'api-chip', title: c.title }, c.text)
 }
 
 function statsBanner(): HTMLElement | null {
@@ -465,6 +522,7 @@ function draw(): void {
       el('h1', {}, `${owner} · Shipwatch`),
       el('span', { class: 'dim' }, `generated ${new Date(data.generatedAt).toLocaleString()}`),
       el('span', { class: 'grow' }),
+      apiChip(),
       el(
         'select',
         { class: 'theme', title: 'Theme', 'aria-label': 'Theme', onchange: (e: Event) => applyTheme((e.target as HTMLSelectElement).value) },
@@ -474,6 +532,7 @@ function draw(): void {
       button('Dashboard', state.view === 'dashboard', () => ((state.view = 'dashboard'), draw())),
       button(data.statsStatus?.state === 'loading' ? 'Stats (loading...)' : 'Stats', state.view === 'stats', () => ((state.view = 'stats'), draw())),
     ),
+    ...(data.boardStatus ? [boardBanner()!] : []),
     state.view === 'dashboard' ? dashboard() : stats(),
   )
 }
@@ -500,6 +559,38 @@ draw()
   setStats(stats: ReportData['stats']): void {
     data.stats = stats
     draw()
+  },
+  /** A freshly read dashboard replaces the saved one on screen; the tab, filters and sort stay as they are. */
+  setBoard(board: ReportData['board'], generatedAt: number, recent: ReportData['recentPrs'] | null): void {
+    data.board = board
+    data.generatedAt = generatedAt
+    if (recent) data.recentPrs = recent
+    draw()
+  },
+  /** How updating the dashboard is going; null once the dashboard on screen is current. */
+  setBoardStatus(status: ReportData['boardStatus'] | null): void {
+    const before = data.boardStatus?.state
+    data.boardStatus = status ?? undefined
+    const box = document.getElementById('board-banner')
+    if (status && box && before === status.state) fillBanner(box, status, 'board')
+    else draw()
+  },
+  /** The last hour's PRs; the clock picks them up on its next tick. */
+  setRecent(recent: NonNullable<ReportData['recentPrs']>): void {
+    data.recentPrs = recent
+  },
+  /** What is left of GitHub's allowances; only the chip in the header is repainted. */
+  setApi(api: NonNullable<ReportData['api']>): void {
+    data.api = api
+    const c = apiChipText()
+    const chip = document.getElementById('api-chip')
+    if (c && chip) {
+      chip.className = `chip-api ${c.tone}`
+      chip.title = c.title
+      chip.textContent = c.text
+    } else {
+      draw()
+    }
   },
   setStatus(status: ReportData['statsStatus'] | null): void {
     const before = data.statsStatus?.state

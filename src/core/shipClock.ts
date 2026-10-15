@@ -1,100 +1,139 @@
-// The ship clock: an analog clock whose hands are driven by the board instead of the time of day. Pure text
-// in, text out, like charts.ts, so a web report or an app embeds the same markup.
-//
-//   hour hand    points at the repo that most needs you (failing, then building, then ready, then
-//                awaiting release); the twelve hour marks are the repos that need attention, most urgent
-//                first, each coloured by its state
-//   minute hand  how far that repo is through the stepper: PR, Build, Merged, Released (a full turn is
-//                released; a build in progress counts as half a step)
-//   second hand  sweeps once a minute; red while a build is failing, amber while one is running, green when
-//                something is ready to merge, grey when there is nothing to watch
-//
-// Only the second hand moves on its own (an SVG animation, so the page needs no script for it); the other
-// two change when the report is regenerated.
+// The ship clock: a real analog clock whose rim shows what has been shipped in the last hour. The hour and minute
+// hands (and a second hand) show the actual time; a dot sits on the rim at the minute each PR was opened, in the
+// last 60 minutes, coloured by where that PR stands now. So the dial reads like an hour of work: dots piling up
+// around it is a busy hour, and each one drops off when its minute comes round again an hour later.
+// Pure text in, text out, like charts.ts, so a web report or an app embeds the same markup.
 
-import type { Level, RepoView } from './types'
+import type { RecentPr } from './types'
 
-/** The levels that earn an hour mark: a repo that is draft-only, quiet or stale does not. */
-const ACTIVE: Level[] = ['fail', 'running', 'ready', 'pending']
+/** The rolling window the clock shows. */
+export const WINDOW_MS = 60 * 60_000
 
-const LEVEL_RANK: Record<Level, number> = { fail: 0, running: 1, ready: 2, pending: 3, draft: 4, idle: 5 }
+/** Where a recent PR stands, as the clock colours it. */
+export type DotStatus = 'merged' | 'ready' | 'building' | 'failing' | 'open' | 'draft' | 'closed'
 
-/** Mid-tones that read on a light or a dark background, matching the report's level colours. */
-export const CLOCK_COLOR: Record<Level, string> = {
-  fail: '#e5534b',
-  running: '#d9a520',
+export const DOT_COLOR: Record<DotStatus, string> = {
+  merged: '#8a7bd8',
   ready: '#3fa66b',
-  pending: '#8a7bd8',
+  building: '#d9a520',
+  failing: '#e5534b',
+  open: '#4c8dff',
   draft: '#8b929c',
-  idle: '#8b929c',
+  closed: '#8b929c',
 }
 
-export type ClockSlot = { name: string; level: Level; headline: string }
-
-export type ClockModel = {
-  /** Repos that need attention, most urgent first; at most twelve, one per hour mark. */
-  slots: ClockSlot[]
-  /** Repos that need attention but did not fit on the dial. */
-  extra: number
-  /** Index into `slots` the hour hand points at; -1 when there is nothing to watch. */
-  focus: number
-  /** Degrees clockwise from 12. */
-  hourAngle: number
-  minuteAngle: number
-  /** What the second hand shows: the most urgent state on the board. */
-  tone: Level
+export const DOT_LABEL: Record<DotStatus, string> = {
+  merged: 'merged',
+  ready: 'open, checks passing',
+  building: 'open, checks running',
+  failing: 'open, checks failing',
+  open: 'open',
+  draft: 'draft',
+  closed: 'closed without merging',
 }
 
-const stepProgress = (steps: RepoView['steps']): number => {
-  let done = 0
-  for (const s of steps) {
-    if (s === 'done') done += 1
-    else if (s === 'running') done += 0.5
+/** The status a recent PR is drawn as. */
+export const dotStatus = (pr: RecentPr): DotStatus => {
+  if (pr.state === 'merged') return 'merged'
+  if (pr.state === 'closed') return 'closed'
+  if (pr.isDraft) return 'draft'
+  if (pr.checks === 'failing') return 'failing'
+  if (pr.checks === 'running') return 'building'
+  if (pr.checks === 'passing') return 'ready'
+  return 'open'
+}
+
+/** The PRs opened in the last hour (after `now` minus the window, up to now), newest first. */
+export const inWindow = (prs: readonly RecentPr[], now: number, windowMs = WINDOW_MS): RecentPr[] =>
+  prs
+    .filter(p => {
+      const t = Date.parse(p.createdAt)
+      return Number.isFinite(t) && t > now - windowMs && t <= now
+    })
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+
+/** Minutes past the hour, with the seconds as a fraction (0 up to 60), in the reader's own time zone. */
+export const localMinute = (ms: number): number => {
+  const d = new Date(ms)
+  return d.getMinutes() + d.getSeconds() / 60
+}
+
+/** One dot on the rim. */
+export type Dot = {
+  pr: RecentPr
+  status: DotStatus
+  /** Degrees clockwise from 12: the minute it was opened. */
+  angle: number
+  /** 0 is the outermost track; dots opened within a moment of each other take inner tracks so none hide another. */
+  track: number
+  minutesAgo: number
+}
+
+const TRACKS = 4
+/** Dots closer than this (degrees) share a track only if they would overlap, so they are put on different ones. */
+const CLEARANCE = 13
+
+const angularGap = (a: number, b: number): number => {
+  const d = Math.abs(a - b) % 360
+  return d > 180 ? 360 - d : d
+}
+
+/** The dots for `prs` as of `now`, oldest first. `minuteOf` says which minute of the hour an instant falls on. */
+export const dotsFor = (prs: readonly RecentPr[], now: number, minuteOf: (ms: number) => number = localMinute): Dot[] => {
+  const dots: Dot[] = []
+  for (const pr of inWindow(prs, now).reverse()) {
+    const at = Date.parse(pr.createdAt)
+    const angle = Math.round(minuteOf(at) * 6 * 10) / 10
+    let track = 0
+    while (track < TRACKS - 1 && dots.some(d => d.track === track && angularGap(d.angle, angle) < CLEARANCE)) track += 1
+    dots.push({ pr, status: dotStatus(pr), angle, track, minutesAgo: Math.floor((now - at) / 60_000) })
   }
-  return done / steps.length
+  return dots
 }
 
-/** What the hands show for `repos`. */
-export function shipClockModel(repos: readonly RepoView[]): ClockModel {
-  const active = repos
-    .filter(r => ACTIVE.includes(r.level) && !r.isStale)
-    .sort(
-      (a, b) =>
-        LEVEL_RANK[a.level] - LEVEL_RANK[b.level] ||
-        (Date.parse(b.pushedAt) || 0) - (Date.parse(a.pushedAt) || 0) ||
-        a.name.localeCompare(b.name),
-    )
-  const shown = active.slice(0, 12)
-  if (shown.length === 0) return { slots: [], extra: 0, focus: -1, hourAngle: 0, minuteAngle: 0, tone: 'idle' }
-  const lead = shown[0]!
-  // A runner outage is not the code's fault, so it must not turn the second hand red on its own.
-  const real = active.find(r => r.level === 'fail' && !r.isInfra)
+/** Counts for the last hour. */
+export type HourSummary = { opened: number; merged: number; open: number; failing: number; building: number; closed: number }
+
+export const summarize = (prs: readonly RecentPr[], now: number): HourSummary => {
+  const recent = inWindow(prs, now)
+  const count = (pick: (p: RecentPr) => boolean): number => recent.filter(pick).length
   return {
-    slots: shown.map(r => ({ name: r.name, level: r.level, headline: r.headline })),
-    extra: active.length - shown.length,
-    focus: 0,
-    hourAngle: 0,
-    minuteAngle: Math.round(stepProgress(lead.steps) * 360 * 10) / 10,
-    tone: real ? 'fail' : (active.find(r => r.level !== 'fail')?.level ?? 'idle'),
+    opened: recent.length,
+    merged: count(p => p.state === 'merged'),
+    open: count(p => p.state === 'open'),
+    failing: count(p => p.state === 'open' && p.checks === 'failing'),
+    building: count(p => p.state === 'open' && p.checks === 'running'),
+    closed: count(p => p.state === 'closed'),
   }
 }
 
-/** One line saying what the clock shows, for a label and a tooltip. */
-export function describeShipClock(model: ClockModel): string {
-  if (model.slots.length === 0) return 'Nothing needs attention'
-  const count = (level: Level): number => model.slots.filter(s => s.level === level).length
-  const parts = [
-    count('fail') && `${count('fail')} failing`,
-    count('running') && `${count('running')} building`,
-    count('ready') && `${count('ready')} ready to merge`,
-    count('pending') && `${count('pending')} awaiting release`,
-  ].filter(Boolean)
-  const lead = model.slots[model.focus]!
-  return `${parts.join(', ')}. Hour hand: ${lead.name} (${lead.headline})`
+/** One line for the label and tooltip: "7 opened in the last hour: 4 merged, 2 open (1 building), 1 closed". */
+export const describeHour = (s: HourSummary): string => {
+  if (s.opened === 0) return 'No PRs opened in the last hour'
+  const open = s.open > 0 ? `${s.open} open${s.failing ? ` (${s.failing} failing)` : s.building ? ` (${s.building} building)` : ''}` : ''
+  const parts = [s.merged && `${s.merged} merged`, open, s.closed && `${s.closed} closed`].filter(Boolean)
+  return `${s.opened} ${s.opened === 1 ? 'PR' : 'PRs'} opened in the last hour${parts.length ? `: ${parts.join(', ')}` : ''}`
 }
 
-const esc = (s: string): string =>
-  s.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!)
+// ---- Hands -------------------------------------------------------------------------------------------------
+
+export type ClockTime = { hours: number; minutes: number; seconds: number }
+
+export const clockTime = (ms: number): ClockTime => {
+  const d = new Date(ms)
+  return { hours: d.getHours(), minutes: d.getMinutes(), seconds: d.getSeconds() + d.getMilliseconds() / 1000 }
+}
+
+/** Degrees clockwise from 12 for each hand. */
+export const handAngles = (t: ClockTime): { hour: number; minute: number; second: number } => ({
+  hour: ((t.hours % 12) + t.minutes / 60) * 30,
+  minute: (t.minutes + t.seconds / 60) * 6,
+  second: t.seconds * 6,
+})
+
+// ---- Drawing -----------------------------------------------------------------------------------------------
+
+const esc = (s: string): string => s.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!)
 
 const r1 = (n: number): string => String(Math.round(n * 10) / 10)
 
@@ -103,61 +142,73 @@ const point = (angle: number, radius: number): [number, number] => {
   return [100 + Math.sin(a) * radius, 100 - Math.cos(a) * radius]
 }
 
-const hand = (angle: number, length: number, tail: number, width: number, cls: string, color?: string): string => {
-  const [x2, y2] = point(angle, length)
-  const [x1, y1] = point(angle + 180, tail)
-  return `<line class="${cls}" x1="${r1(x1)}" y1="${r1(y1)}" x2="${r1(x2)}" y2="${r1(y2)}" stroke-width="${width}" stroke-linecap="round"${color ? ` stroke="${color}"` : ''}/>`
+const pad = (n: number): string => String(n).padStart(2, '0')
+
+const hand = (cls: string, length: number, tail: number, width: number): string => {
+  const [x2, y2] = point(0, length)
+  const [x1, y1] = point(180, tail)
+  return `<line class="${cls}" x1="${r1(x1)}" y1="${r1(y1)}" x2="${r1(x2)}" y2="${r1(y2)}" stroke-width="${width}" stroke-linecap="round"/>`
 }
 
 const STYLE =
   '<style>.face{fill:#8b929c;fill-opacity:.1;stroke:#8b929c;stroke-opacity:.6;stroke-width:3}' +
-  '.min{stroke:#8b929c;stroke-opacity:.45;stroke-width:1}.mark{stroke:#8b929c;stroke-opacity:.8;stroke-width:2}' +
-  '.mh{stroke:#1f2328}@media (prefers-color-scheme:dark){.mh{stroke:#e6edf3}}</style>'
+  '.tick{stroke:#8b929c;stroke-opacity:.45;stroke-width:1}.mark{stroke:#8b929c;stroke-opacity:.8;stroke-width:2}' +
+  '.hh,.mh{stroke:var(--clock-hand,#1f2328)}.sh{stroke:#e5534b}' +
+  '@media (prefers-color-scheme:dark){.hh,.mh{stroke:var(--clock-hand,#e6edf3)}}</style>'
+
+/** Where the rim's dots sit: the outermost track, then inwards. */
+const trackRadius = (track: number): number => 79 - track * 13
+
+export type ClockOptions = {
+  size?: number
+  /** Draw the second hand. The page moves it; here it is only placed at `now`. */
+  seconds?: boolean
+  /** Format a time for a dot's tooltip (default: HH:MM in the reader's zone). */
+  format?: (ms: number) => string
+}
+
+const clock24 = (ms: number): string => {
+  const d = new Date(ms)
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
 
 /**
- * The clock, `size` px square. `now` (epoch ms) sets where the second hand starts; with `animate` it then
- * keeps sweeping, otherwise it stays put (for people who ask for reduced motion, and for tests).
+ * The clock, `size` px square, showing `now` on its hands and `dots` on its rim. The hands carry the classes
+ * `hh`, `mh` and `sh` and sit at their angle through a `transform`, which the page rewrites as time passes.
  */
-export function shipClockSvg(model: ClockModel, now: number, opts: { size?: number; animate?: boolean } = {}): string {
-  const size = opts.size ?? 160
-  const animate = opts.animate ?? true
-  const label = esc(describeShipClock(model))
-  const tone = CLOCK_COLOR[model.tone]
-  const lead = model.focus >= 0 ? model.slots[model.focus] : undefined
+export function shipClockSvg(now: number, dots: readonly Dot[], opts: ClockOptions = {}): string {
+  const size = opts.size ?? 190
+  const format = opts.format ?? clock24
+  const angles = handAngles(clockTime(now))
+  const summary = describeHour(summarize(dots.map(d => d.pr), now))
 
-  let body = '<circle class="face" cx="100" cy="100" r="94"/>'
+  let body = '<circle class="face" cx="100" cy="100" r="95"/>'
   for (let i = 0; i < 60; i++) {
     if (i % 5 === 0) continue
-    const [x1, y1] = point(i * 6, 86)
-    const [x2, y2] = point(i * 6, 90)
-    body += `<line class="min" x1="${r1(x1)}" y1="${r1(y1)}" x2="${r1(x2)}" y2="${r1(y2)}"/>`
+    const [x1, y1] = point(i * 6, 90)
+    const [x2, y2] = point(i * 6, 93)
+    body += `<line class="tick" x1="${r1(x1)}" y1="${r1(y1)}" x2="${r1(x2)}" y2="${r1(y2)}"/>`
   }
   for (let h = 0; h < 12; h++) {
-    const slot = model.slots[h]
-    if (slot) {
-      const [cx, cy] = point(h * 30, 80)
-      const focused = h === model.focus
-      body +=
-        `<circle cx="${r1(cx)}" cy="${r1(cy)}" r="${focused ? 9 : 7}" fill="${CLOCK_COLOR[slot.level]}"` +
-        `${focused ? ' stroke="#fff" stroke-opacity=".85" stroke-width="2"' : ''}><title>${esc(slot.name)} · ${esc(slot.headline)}</title></circle>`
-    } else {
-      const [x1, y1] = point(h * 30, 76)
-      const [x2, y2] = point(h * 30, 90)
-      body += `<line class="mark" x1="${r1(x1)}" y1="${r1(y1)}" x2="${r1(x2)}" y2="${r1(y2)}"/>`
-    }
+    const [x1, y1] = point(h * 30, 86)
+    const [x2, y2] = point(h * 30, 93)
+    body += `<line class="mark" x1="${r1(x1)}" y1="${r1(y1)}" x2="${r1(x2)}" y2="${r1(y2)}"/>`
   }
-  body += hand(model.hourAngle, 48, 8, 6, 'hh', lead ? CLOCK_COLOR[lead.level] : '#8b929c')
-  body += hand(model.minuteAngle, 68, 10, 4, 'mh')
+  for (const d of dots) {
+    const [cx, cy] = point(d.angle, trackRadius(d.track))
+    const color = DOT_COLOR[d.status]
+    const hollow = d.status === 'draft'
+    const tip = `#${d.pr.number} ${d.pr.repo}: ${d.pr.title} (opened ${format(Date.parse(d.pr.createdAt))}, ${DOT_LABEL[d.status]})`
+    body +=
+      `<circle class="dot" cx="${r1(cx)}" cy="${r1(cy)}" r="${d.status === 'closed' ? 4.5 : 6}" ` +
+      (hollow ? `fill="none" stroke="${color}" stroke-width="2.5"` : `fill="${color}" stroke="#fff" stroke-opacity=".7" stroke-width="1"`) +
+      `><title>${esc(tip)}</title></circle>`
+  }
+  body += `<g class="hh" transform="rotate(${r1(angles.hour)} 100 100)">${hand('hh', 46, 8, 6)}</g>`
+  body += `<g class="mh" transform="rotate(${r1(angles.minute)} 100 100)">${hand('mh', 66, 10, 4)}</g>`
+  if (opts.seconds ?? true) body += `<g class="sh" transform="rotate(${r1(angles.second)} 100 100)">${hand('sh', 74, 16, 1.6)}</g>`
+  body += '<circle cx="100" cy="100" r="5" fill="#8b929c"/><circle cx="100" cy="100" r="2" fill="#fff" fill-opacity=".9"/>'
 
-  const start = (((now % 60_000) + 60_000) % 60_000) / 60_000 * 360
-  const second = hand(0, 76, 18, 1.8, 'sh', tone)
-  body += animate
-    ? second.replace(
-        '/>',
-        `><animateTransform attributeName="transform" type="rotate" from="${r1(start)} 100 100" to="${r1(start + 360)} 100 100" dur="60s" repeatCount="indefinite"/></line>`,
-      )
-    : second.replace('/>', ` transform="rotate(${r1(start)} 100 100)"/>`)
-  body += `<circle cx="100" cy="100" r="6" fill="${tone}"/><circle cx="100" cy="100" r="2" fill="#fff" fill-opacity=".9"/>`
-
+  const label = esc(summary)
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 200 200" role="img" aria-label="${label}">${STYLE}<title>${label}</title>${body}</svg>`
 }
