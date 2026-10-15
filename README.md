@@ -187,3 +187,23 @@ so every commit is an update for installed copies.
 ## License
 
 AGPL-3.0. See [LICENSE](LICENSE).
+
+## The standalone app
+
+`app/` is an Electron app that shows the same report as the **Full report** button, without needing a Claude
+session: `View, Refresh` reads GitHub and rebuilds the page. It imports the core from `src/core` (nothing is
+copied), supplying `gh`/HTTP and a JSON file in place of the mod engine.
+
+```bash
+cd app
+npm install
+npm start
+```
+
+It uses the `gh` CLI you are signed in with, or `GITHUB_TOKEN`. Optional settings go in `config.json` in the app's
+user-data folder (`%APPDATA%/Shipwatch` on Windows): `owner`, `includeForks`, `maxRepos`, `staleDays`, `aiNames`,
+`ignore`. `SHIPWATCH_OWNER` overrides the owner. The first run loads a year of merged PRs; later runs fetch only what
+is new.
+
+The app is a second product in the same repo: see [KVG_Standards' claude-plugins.md](https://github.com/gerp93/KVG_Standards/blob/main/claude-plugins.md)
+("A plugin with a companion app"). There is deliberately no `package.json` at the repo root.

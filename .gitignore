@@ -1,3 +1,7 @@
 node_modules/
 .claude/types/
 *.log
+app/node_modules/
+app/dist/
+app/dist-test/
+app/release/

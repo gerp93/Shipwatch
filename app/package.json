@@ -1,0 +1,34 @@
+{
+  "name": "shipwatch-app",
+  "productName": "Shipwatch",
+  "version": "0.1.0",
+  "description": "Every repo under a GitHub account on one screen: running builds, open PRs, who shipped what.",
+  "main": "dist/main.js",
+  "private": true,
+  "license": "AGPL-3.0",
+  "author": "gerp93",
+  "scripts": {
+    "build": "node build.mjs",
+    "start": "npm run build && electron .",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "node build.mjs --tests && node --test \"dist-test/*.spec.js\"",
+    "package": "electron-builder"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "electron": "^44.7.2",
+    "electron-builder": "^26.0.0",
+    "esbuild": "0.25.5",
+    "typescript": "^5.7.0"
+  },
+  "build": {
+    "appId": "com.gerp93.shipwatch",
+    "productName": "Shipwatch",
+    "directories": { "output": "release" },
+    "files": ["dist/**", "package.json"],
+    "win": { "target": ["nsis"] },
+    "mac": { "target": ["dmg"], "category": "public.app-category.developer-tools" },
+    "linux": { "target": ["AppImage"], "category": "Development" },
+    "publish": [{ "provider": "github", "owner": "gerp93", "repo": "Shipwatch" }]
+  }
+}
