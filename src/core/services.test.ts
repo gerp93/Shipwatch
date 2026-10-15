@@ -2,6 +2,7 @@ import { expect, test } from 'claude-code/testing'
 
 import { buildBoard } from './boardService'
 import type { InfraVerdicts } from './boardService'
+import { fetchGraphqlReset } from './github'
 import type { Access, IO, Store } from './ports'
 import { STATS_FRESH_MS, loadStatsCache, refreshStats, statsAreFresh } from './statsService'
 import type { StatsBoard } from './types'
@@ -252,4 +253,60 @@ test('a long load keeps what it has fetched, newest first, when GitHub stops it 
   expect(waits).toEqual([60_000])
   expect(done.prs.map(p => p.id).sort()).toEqual(['new', 'old'])
   expect(done.coveredFrom).toBe('2026-07-11')
+})
+
+test('the board read reports what is left of GitHub\'s allowance, and the reset time is asked of the free endpoint', async () => {
+  const gh = fakeGitHub(ask => {
+    if (ask.kind === 'rest' && ask.text === 'rate_limit') return { resources: { graphql: { reset: 1_792_100_964 } } }
+    return {
+      data: {
+        rateLimit: { cost: 9, remaining: 4_321, limit: 5_000, resetAt: '2026-10-15T21:49:24Z' },
+        repositoryOwner: { repositories: { nodes: [] } },
+      },
+    }
+  })
+  let seen: unknown
+  await buildBoard(gh.io, ACCESS, { owner: 'me', count: 10, includeForks: false, ignore: new Set(), staleMs: 1, onBudget: b => void (seen = b) }, NOW, new Map())
+  expect(seen).toEqual({ cost: 9, remaining: 4_321, limit: 5_000, resetAt: Date.parse('2026-10-15T21:49:24Z') })
+  expect(await fetchGraphqlReset(gh.io, ACCESS)).toBe(1_792_100_964_000)
+  expect(await fetchGraphqlReset(fakeGitHub(() => ({})).io, ACCESS)).toBeUndefined()
+})
+
+test('a load that hits the hourly limit waits for the reset when it is soon, and stops with an explanation when it is not', async () => {
+  const limited = (resetInMs: number) => (ask: Ask): unknown => {
+    if (ask.kind === 'rest' && ask.text === 'rate_limit') return { resources: { graphql: { reset: Math.floor((Date.now() + resetInMs) / 1000) } } }
+    if (ask.text.includes('viewer')) return { data: { viewer: { login: 'me' } } }
+    if (ask.text.includes('CREATED_AT')) return { data: { repositoryOwner: { repositories: { pageInfo: { hasNextPage: false }, nodes: [] } } } }
+    if (ask.vars.q) throw new Error('gh: API rate limit already exceeded for user ID 1.')
+    return {}
+  }
+  // Soon: it waits roughly until the reset, once, then goes on (the retry fails again here, so it ends after one wait).
+  const waits: number[] = []
+  let soonFailure = ''
+  try {
+    await refreshStats(
+      { io: fakeGitHub(limited(3 * 60_000)).io, access: ACCESS, store: memoryStore(), owner: 'me', aiNames: [], now: NOW, wait: async ms => void waits.push(ms) },
+      emptyStats(),
+    )
+  } catch (err) {
+    soonFailure = String(err)
+  }
+  expect(waits.length).toBeGreaterThan(0)
+  expect(waits[0]! > 3 * 60_000 - 5_000 && waits[0]! < 3 * 60_000 + 10_000).toBe(true)
+  expect(soonFailure).toContain('rate limit')
+
+  // Far off (an hour): no waiting; it stops and says when the allowance returns.
+  const far: number[] = []
+  let farFailure = ''
+  try {
+    await refreshStats(
+      { io: fakeGitHub(limited(60 * 60_000)).io, access: ACCESS, store: memoryStore(), owner: 'me', aiNames: [], now: NOW, wait: async ms => void far.push(ms) },
+      emptyStats(),
+    )
+  } catch (err) {
+    farFailure = String(err)
+  }
+  expect(far).toEqual([])
+  expect(farFailure).toContain('used up')
+  expect(farFailure).toContain('resets at')
 })

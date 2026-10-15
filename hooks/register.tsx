@@ -6,7 +6,9 @@ import type { Seen } from '../src/core/analyze'
 import { buildBoard } from '../src/core/boardService'
 import { barsSvg, chartColor, donutSvg, legendSvg, weeksSvg } from '../src/core/charts'
 import type { InfraVerdicts } from '../src/core/boardService'
-import { connect, resolveOwner } from '../src/core/github'
+import { isRateLimit, pace, rateLimitMessage, throttleNote } from '../src/core/budget'
+import type { Budget } from '../src/core/budget'
+import { connect, fetchGraphqlReset, resolveOwner } from '../src/core/github'
 import { openArgv, renderReport } from '../src/core/report'
 import { headlineLink, safeHref, stepLinks } from '../src/core/links'
 import type { StepLinks } from '../src/core/links'
@@ -38,7 +40,7 @@ const ACTIVE_POLL_MS = 20_000
 const ERROR_POLL_MS = 60_000
 const MAX_PRS_SHOWN = 3
 
-const INITIAL: Board = { owner: '', repos: [], updatedAt: 0, isLoading: false, error: null, source: null }
+const INITIAL: Board = { owner: '', repos: [], updatedAt: 0, isLoading: false, error: null, note: null, source: null }
 const board = atom({ plugin: 'shipwatch', key: 'board' } as const, INITIAL)
 const showStale = atom({ plugin: 'shipwatch', key: 'showStale' } as const, false)
 const view = atom({ plugin: 'shipwatch', key: 'view' } as const, 'dashboard' as ViewName)
@@ -115,6 +117,7 @@ async function refresh($: any): Promise<number> {
   isPolling = true
   await update($, board, b => ({ ...b, isLoading: true }))
   let delay = cfg.idleMs
+  let budget: Budget | undefined
   const io: IO = {
     run: (argv, init) => $.process.run(argv, init),
     fetch: (url, init) => $.http.fetch(url, init),
@@ -126,7 +129,14 @@ async function refresh($: any): Promise<number> {
     const repos = await buildBoard(
       io,
       access,
-      { owner: resolvedOwner, count: cfg.count, includeForks: cfg.includeForks, ignore: cfg.ignore, staleMs: cfg.staleMs },
+      {
+        owner: resolvedOwner,
+        count: cfg.count,
+        includeForks: cfg.includeForks,
+        ignore: cfg.ignore,
+        staleMs: cfg.staleMs,
+        onBudget: b => void (budget = b),
+      },
       now,
       infraVerdicts,
     )
@@ -152,14 +162,27 @@ async function refresh($: any): Promise<number> {
     $.ui.status(statusLine(repos))
 
     const source = access.source
-    await update($, board, () => ({ owner: resolvedOwner, repos, updatedAt: now, isLoading: false, error: null, source }))
     if (repos.some(r => r.level === 'running')) delay = ACTIVE_POLL_MS
+    // Stretch the wait as GitHub's shared hourly allowance runs down (see core/budget.ts).
+    const wanted = delay
+    const paced = pace(budget, now, wanted)
+    delay = paced.delayMs
+    const note = budget && (paced.paused || paced.delayMs > wanted) ? throttleNote(budget, paced) : null
+    await update($, board, () => ({ owner: resolvedOwner, repos, updatedAt: now, isLoading: false, error: null, note, source }))
   } catch (err) {
+    const reached = access
     access = undefined
     resolvedOwner = ''
-    const message = err instanceof Error ? err.message : String(err)
-    await update($, board, b => ({ ...b, isLoading: false, error: message }))
+    let message = err instanceof Error ? err.message : String(err)
     delay = ERROR_POLL_MS
+    if (isRateLimit(message)) {
+      // Say when it resets and wait for that, instead of asking again every minute.
+      const resetAt = reached ? await fetchGraphqlReset(io, reached) : undefined
+      const at: number = await $.clock.now()
+      message = rateLimitMessage(resetAt, at)
+      if (resetAt && resetAt > at) delay = Math.min(65 * 60_000, resetAt - at + 5_000)
+    }
+    await update($, board, b => ({ ...b, isLoading: false, error: message, note: null }))
   } finally {
     isPolling = false
   }
@@ -680,6 +703,11 @@ export const register: Register = (on, options) => {
         {b.error && (
           <Box marginBottom={1}>
             <Text color="red" wrap="wrap">{b.error}</Text>
+          </Box>
+        )}
+        {b.note && !b.error && (
+          <Box marginBottom={1}>
+            <Text dimColor wrap="wrap">{b.note}</Text>
           </Box>
         )}
         {b.repos.length === 0 && !b.error && <Text dimColor>Fetching repos…</Text>}

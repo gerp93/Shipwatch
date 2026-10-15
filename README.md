@@ -180,6 +180,11 @@ The last two run in CI too (`.github/workflows/checks.yml`).
   publish a release for every merge shows "unreleased commits" once the merge is a few
   hours old.
 - Whether the new build is installed on your machine isn't tracked yet.
+- **GitHub's hourly allowance is shared.** GraphQL gets 5,000 points an hour per account, for everything signed in
+  as you: every open Claude session running Shipwatch (each polls on its own), the `gh` CLI, the app. Shipwatch reads
+  how much is left after each poll, stretches the wait as it runs down, and never spends the last 30% (kept for your
+  other tools and `gh pr create`); the pane says so ("Polling every N s...", "Paused until ..."). If GitHub refuses
+  anyway it says when the allowance resets and waits for that. Each extra open session still costs its own polls.
 
 ## Standards
 

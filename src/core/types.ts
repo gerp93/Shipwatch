@@ -52,6 +52,8 @@ export type Board = {
   updatedAt: number
   isLoading: boolean
   error: string | null
+  /** How the dashboard is being paced when it is slowed or paused for GitHub's allowance; null when it is not. */
+  note: string | null
   /** How the last refresh reached GitHub. */
   source: 'gh' | 'token' | null
 }

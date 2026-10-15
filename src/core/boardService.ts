@@ -1,4 +1,5 @@
 import { analyze, byUrgency, markInfra } from './analyze'
+import type { Budget } from './budget'
 import { fetchActivity, fetchInfraFailure, fetchRepos } from './github'
 import type { Access, IO } from './ports'
 import type { RepoView } from './types'
@@ -21,6 +22,8 @@ export type BoardOptions = {
   /** Lower-case repo names to leave out. */
   ignore: ReadonlySet<string>
   staleMs: number
+  /** Told what GitHub's allowance has left after the read, so the caller can pace itself (see budget.ts). */
+  onBudget?: (budget: Budget) => void
 }
 
 /** Per `repo:commit`, whether a failed main build was GitHub's outage, and when that was last asked. */
@@ -38,7 +41,7 @@ export const buildBoard = async (
   now: number,
   infraVerdicts: InfraVerdicts,
 ): Promise<RepoView[]> => {
-  const raw = await fetchRepos(io, access, options.owner, options.count, options.includeForks)
+  const raw = await fetchRepos(io, access, options.owner, options.count, options.includeForks, options.onBudget)
   const repos = raw
     .filter(r => !r.isArchived && !options.ignore.has(r.name.toLowerCase()))
     .map(r => analyze(r, now, BOARD_DEFAULTS.recentMs, options.staleMs))

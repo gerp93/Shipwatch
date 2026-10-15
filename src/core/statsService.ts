@@ -1,4 +1,6 @@
 import type { Access, IO, Store } from './ports'
+import { RATE_LIMITED, rateLimitMessage } from './budget'
+import { fetchGraphqlReset } from './github'
 import { dateOf, earliestKnown, mergeById, planFetch, rangeSince, summarizePr } from './stats'
 import { fetchMergedPrs, fetchReposCreated, fetchViewerLogin } from './statsFetch'
 import type { PrSummary, StatsBoard } from './types'
@@ -57,9 +59,11 @@ export type StatsDeps = {
   wait?: (ms: number) => Promise<void>
 }
 
-const RATE_LIMITED = /rate limit|secondary|abuse|answered (403|429)/i
+/** A pause when GitHub says to slow down and does not say until when. */
 const RATE_LIMIT_PAUSE_MS = 60_000
 const RATE_LIMIT_TRIES = 4
+/** The longest wait for an allowance reset; a longer one ends the load, which resumes from what is kept. */
+const RATE_LIMIT_MAX_WAIT_MS = 20 * 60_000
 
 /**
  * Brings the merged-PR history up to date for the range in `s` and reads the repos' creation dates, then
@@ -97,9 +101,20 @@ export const refreshStats = async (deps: StatsDeps, s: StatsBoard): Promise<Stat
         break
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err)
-        if (!deps.wait || !RATE_LIMITED.test(message) || attempt >= RATE_LIMIT_TRIES) throw err
-        deps.onProgress?.(`GitHub asked us to slow down; waiting a minute (try ${attempt} of ${RATE_LIMIT_TRIES - 1}) at ${w.from} to ${w.to}...`)
-        await deps.wait(RATE_LIMIT_PAUSE_MS)
+        if (!deps.wait || !RATE_LIMITED.test(message)) throw err
+        // The hourly allowance resets at a known time: wait for it if that is soon, else stop (what is kept stays).
+        const resetAt = await fetchGraphqlReset(io, access)
+        const untilReset = resetAt ? resetAt - Date.now() : undefined
+        if (untilReset !== undefined && untilReset > RATE_LIMIT_MAX_WAIT_MS) throw new Error(rateLimitMessage(resetAt, Date.now()))
+        // However it is told, give up after a few tries rather than wait for ever on a limit that does not lift.
+        if (attempt >= RATE_LIMIT_TRIES) throw err
+        const pause = untilReset !== undefined && untilReset > 0 ? untilReset + 5_000 : RATE_LIMIT_PAUSE_MS
+        deps.onProgress?.(
+          untilReset !== undefined && untilReset > 0
+            ? `GitHub's hourly allowance is used up; waiting ${Math.ceil(pause / 60_000)} min for it to reset, at ${w.from} to ${w.to}...`
+            : `GitHub asked us to slow down; waiting a minute (try ${attempt} of ${RATE_LIMIT_TRIES - 1}) at ${w.from} to ${w.to}...`,
+        )
+        await deps.wait(pause)
       }
     }
     prs = mergeById(prs, raw.map(r => summarizePr(r, you, aiNames)))
