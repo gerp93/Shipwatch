@@ -23,6 +23,7 @@ release. With several apps going at once it answers "which of these is waiting o
 - **Toasts** when a build passes or fails, and when a new release is published.
 - **Auto-fix (opt-in)**: a broken default-branch build can wake an idle session with a
   fix request, so a failure after an auto-merge doesn't wait for you to notice.
+- **A ship clock** on the report and in the standalone app: an analog clock driven by the board. The hour hand points at the repo that most needs you, the minute hand shows how far it is from PR to release, and the second hand is red while a build is failing.
 - **Adaptive polling**: every 20 s while something builds, every 60 s otherwise.
   Press `r` in the pane to refresh now.
 
