@@ -32,6 +32,7 @@ Anything that has to be shown, toasted, or acted on is the host's business: the 
 | `stats.ts` | Who each commit is attributed to; totals for a range and a choice of who to compare; week buckets; which dates still need fetching. |
 | `statsFetch.ts` | The Stats queries (merged PRs with their commits, repos created). |
 | `statsService.ts` | `refreshStats`: bring the history up to date, fetching only what is new, and keep it in a `Store`. |
+| `charts.ts` | The Stats charts as SVG strings: donut, stacked bars, weekly columns, legend. |
 | `links.ts` | Where each part of a repo row links to, and the strict URL check the engine demands. |
 
 Tests sit beside the code (`*.test.ts`) and run with `claude plugin test .`.
