@@ -66,7 +66,7 @@ jobs:
 
   release:
     needs: tag
-    uses: gerp93/KVG_Standards/.github/workflows/release-claude-plugin.yml@claude/claude-plugin-standard
+    uses: gerp93/KVG_Standards/.github/workflows/release-claude-plugin.yml@main
     with:
       version: ${{ needs.tag.outputs.version }}
       plugin_name: shipwatch
