@@ -1,3 +1,5 @@
+<p align="center"><img src="assets/logo-hero.png" alt="Shipwatch" width="520"></p>
+
 # Shipwatch
 
 A [Claude Code](https://claude.com/claude-code) mod that shows every repo under a GitHub
@@ -50,33 +52,35 @@ cancelled or skipped shows no build state.
 
 ### Stats
 
-The **Stats** button switches the pane to what you have shipped over the last 7, 30, 90 days or
-a year, across every repo the account owns:
+The **Stats** button switches the pane to what you have shipped over the last 7, 30, 90, 180 or 365 days, 2 or
+5 years, or all time (back to your first repo), across every repo the account owns. The ranges count back from
+today, so "365 days" is the year up to now, not a calendar year:
 
 - PRs merged, commits, lines changed (added and removed) and repos created, with a bar per
-  author, a per-repo breakdown, and a per-week trend.
+  author, a per-repo breakdown, a per-week trend and a line graph of commits over time (by day, week
+  or month depending on the range, counted on the day each commit's PR merged).
 - **Who it is attributed to.** Claude Code, Cursor and Copilot all commit and open PRs under
   your own account, so who opened a PR says nothing. Each commit is attributed by its author
   and its `Co-Authored-By` lines to You, or to the AI named there. Known AIs are recognized by
   name (Claude, Copilot, Cursor, Codex, Gemini and others); any other `[bot]` account is named
-  by its own login; the `aiNames` option adds more. Other people and chore bots (Dependabot and
-  the like) are kept out of both sides.
+  by its own login; the `aiNames` option adds more. **Other people** is its own share: commits by
+  humans who are not you, never other AIs. Chore bots (Dependabot and the like) are left out entirely.
 - **You vs all AI, or you vs each AI.** One button folds every AI into one bar or splits them;
   each AI has its own switch, so you can compare you against just Claude, for instance.
 - **It is a label, not a measurement of who typed the code.** "You" means a commit with no AI
   marker, which includes AI work committed without one. Lines are added and removed in commits,
   so a commit that rewrites an earlier one counts again.
 - **Charts.** On the desktop app and the editor the Stats view draws a donut of who wrote what, stacked bars per repo and
-  a per-week column chart as vector graphics, with a tooltip on every mark. The terminal has no vector drawing, so it keeps
+  a per-week column chart and a line graph of commits as vector graphics, with a tooltip on every mark. The terminal has no vector drawing, so it keeps
   the text bars. The charts are SVG strings from `src/core/charts.ts`, so any outlet can draw the same ones.
 - **Full report.** The **Full report** button writes one self-contained HTML page (no network, nothing beside it) to the
-  temp folder and opens it in your browser: the dashboard and the stats with filters, sortable tables, the charts, and a
-  click-through to look at one repo alone. It is the same code as the pane, in `src/core/report.ts`; its script is
+  temp folder and opens it in your browser: the dashboard and the stats with filters, sortable tables, the charts, a
+  theme picker (the VisualAssault themes) and a click-through to look at one repo alone. It is the same code as the pane, in `src/core/report.ts`; its script is
   `src/report/client.ts`, bundled into `src/core/reportClient.generated.ts` by `node scripts/build-report.mjs`.
 
 Merged PRs never change, so each is fetched once and kept (in the plugin's store, across
 sessions); opening Stats again only asks for what is new. The first load of a long range can take
-a minute, and the pane says how far along it is.
+a minute (all time, a few), and the pane says how far along it is.
 
 ### Links
 
@@ -194,6 +198,9 @@ AGPL-3.0. See [LICENSE](LICENSE).
 session: `View, Refresh` reads GitHub and rebuilds the page. It imports the core from `src/core` (nothing is
 copied), supplying `gh`/HTTP and a JSON file in place of the mod engine.
 
+Install it from the latest [release](https://github.com/gerp93/Shipwatch/releases/latest) (an installer per
+operating system); the installed app updates itself (Help, Check for updates). To run it from source:
+
 ```bash
 cd app
 npm install
@@ -202,8 +209,14 @@ npm start
 
 It uses the `gh` CLI you are signed in with, or `GITHUB_TOKEN`. Optional settings go in `config.json` in the app's
 user-data folder (`%APPDATA%/Shipwatch` on Windows): `owner`, `includeForks`, `maxRepos`, `staleDays`, `aiNames`,
-`ignore`. `SHIPWATCH_OWNER` overrides the owner. The first run loads a year of merged PRs; later runs fetch only what
-is new.
+`ignore`. `SHIPWATCH_OWNER` overrides the owner. The first run loads your whole merged-PR history (back to your first
+repo), which takes a few minutes; later runs fetch only what is new.
+
+The report has a theme picker: the [VisualAssault](https://github.com/gerp93/VisualAssault) themes, vendored at a pinned
+tag into `src/core/themes.generated.ts` by `node scripts/update-visual-assault-css.mjs <tag>` (CI checks the file matches its tag).
+Icons are generated from `assets/logo.png` by `npm run icons` in `app/`.
 
 The app is a second product in the same repo: see [KVG_Standards' claude-plugins.md](https://github.com/gerp93/KVG_Standards/blob/main/claude-plugins.md)
-("A plugin with a companion app"). There is deliberately no `package.json` at the repo root.
+("A plugin with a companion app"). There is deliberately no `package.json` at the repo root. Releases: every push to
+`main` that touches the app or the code it shares adds installers to that push's release, and **Cut Release** always
+builds them.

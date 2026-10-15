@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { barsSvg, chartColor, donutSvg, legendSvg, weeksSvg } from './charts'
+import { barsSvg, chartColor, donutSvg, legendSvg, linesSvg, weeksSvg } from './charts'
 import { ALL_AI, OTHERS, YOU } from './stats'
 
 const parts = [
@@ -58,4 +58,26 @@ test('text from GitHub is escaped, and the legend wraps', () => {
   expect(s).toContain('a&amp;b')
   const many = Array.from({ length: 12 }, (_, i) => ({ label: `Assistant ${i}`, color: '#111' }))
   expect(legendSvg(many, 300).match(/<circle/g)?.length).toBe(12)
+})
+
+test('the line chart draws one line per series that has data, with a tooltip on every point and a round axis', () => {
+  const labels = ['2026-10-01', '2026-10-02', '2026-10-03']
+  const s = linesSvg(labels, [
+    { label: 'You', color: '#3fa66b', values: [0, 4, 2] },
+    { label: 'Claude', color: '#c061cb', values: [1, 8, 3] },
+    { label: 'Other people', color: '#8b929c', values: [0, 0, 0] },
+  ])
+  expect(s.match(/<polyline/g)?.length).toBe(2) // the all-zero series is left out
+  expect(s).toContain('<title>2026-10-02 · Claude: 8 commits</title>')
+  expect(s).toContain('>8</text>') // the top of the axis, a round number
+  expect(s).toContain('>4</text>') // its midpoint, a whole number too
+  expect(s).not.toContain('NaN')
+  expect(linesSvg([], [])).toBe('')
+  expect(linesSvg(labels, [{ label: 'x', color: '#111', values: [0, 0, 0] }])).toBe('')
+})
+
+test('line chart text from GitHub is escaped', () => {
+  const s = linesSvg(['<b>'], [{ label: 'a&b', color: '#111', values: [3] }])
+  expect(s).not.toContain('<b>')
+  expect(s).toContain('a&amp;b')
 })

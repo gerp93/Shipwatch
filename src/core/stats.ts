@@ -87,6 +87,12 @@ export const actorOf = (commit: RawCommit, you: string, extra: readonly string[]
 
 export const isAi = (actor: string): boolean => actor !== YOU && actor !== OTHERS && actor !== AUTOMATION
 
+/**
+ * What an actor is called on screen. `Others` is the stored key (kept so saved history stays valid), but it
+ * means other people, not other AIs, and the screen says so.
+ */
+export const actorLabel = (actor: string): string => (actor === OTHERS ? 'Other people' : actor)
+
 /** A merged PR boiled down to what the stats need, so it can be kept and never fetched again. */
 export const summarizePr = (raw: RawMergedPr, you: string, extra: readonly string[] = []): PrSummary => {
   const by: PrSummary['by'] = {}
@@ -113,6 +119,8 @@ export type Aggregate = {
   mixed: number
   repos: Array<{ repo: string; prs: number; actors: Array<{ actor: string } & Totals> }>
   weeks: Array<{ start: string; prs: Record<string, number> }>
+  /** Commits per actor for each day (UTC) a PR in view merged, oldest first. A commit counts on its PR's merge day. */
+  days: Array<{ date: string; commits: Record<string, number> }>
 }
 
 export const MIXED = 'Mixed'
@@ -146,6 +154,7 @@ export const aggregate = (
   const actorTotals = new Map<string, Totals>()
   const repoMap = new Map<string, { prs: number; actors: Map<string, Totals> }>()
   const weekMap = new Map<string, Record<string, number>>()
+  const dayMap = new Map<string, Record<string, number>>()
   let inView = 0
   let mixed = 0
 
@@ -185,6 +194,10 @@ export const aggregate = (
     const week = weekMap.get(weekStart(pr.mergedAt)) ?? {}
     week[label] = (week[label] ?? 0) + 1
     weekMap.set(weekStart(pr.mergedAt), week)
+    const date = pr.mergedAt.slice(0, 10)
+    const day = dayMap.get(date) ?? {}
+    for (const [actor, [c]] of folded) day[actor] = (day[actor] ?? 0) + c
+    dayMap.set(date, day)
   }
 
   const actors = (map: Map<string, Totals>) =>
@@ -200,7 +213,49 @@ export const aggregate = (
       .map(([repo, r]) => ({ repo, prs: r.prs, actors: actors(r.actors) }))
       .sort((x, y) => y.prs - x.prs),
     weeks: [...weekMap.entries()].map(([start, prs]) => ({ start, prs })).sort((x, y) => x.start.localeCompare(y.start)),
+    days: [...dayMap.entries()].map(([date, commits]) => ({ date, commits })).sort((x, y) => x.date.localeCompare(y.date)),
   }
+}
+
+export type Bucket = 'day' | 'week' | 'month'
+
+/** How coarsely to chart a range so the line has enough points to read and not so many it is noise. */
+export const bucketFor = (spanDays: number): Bucket => (spanDays <= 45 ? 'day' : spanDays <= 200 ? 'week' : 'month')
+
+/**
+ * Commits per actor over time as aligned series, one value per bucket from `fromMs` to `toMs` with empty
+ * buckets as zero, so a quiet stretch shows as a dip and not a gap. Buckets are UTC days, Monday-start
+ * weeks, or calendar months. Labels are the bucket's first date (`YYYY-MM-DD`, or `YYYY-MM` for a month).
+ */
+export const commitSeries = (
+  days: Aggregate['days'],
+  actors: readonly string[],
+  bucket: Bucket,
+  fromMs: number,
+  toMs: number,
+): { labels: string[]; values: Record<string, number[]> } => {
+  const keyOf = (date: string): string => (bucket === 'day' ? date : bucket === 'week' ? weekStart(`${date}T00:00:00Z`) : date.slice(0, 7))
+  const labels: string[] = []
+  if (bucket === 'month') {
+    const from = new Date(fromMs)
+    const to = new Date(toMs)
+    for (let y = from.getUTCFullYear(), m = from.getUTCMonth(); y < to.getUTCFullYear() || (y === to.getUTCFullYear() && m <= to.getUTCMonth()); ) {
+      labels.push(`${y}-${String(m + 1).padStart(2, '0')}`)
+      if (++m > 11) (m = 0), y++
+    }
+  } else {
+    const step = bucket === 'day' ? DAY_MS : 7 * DAY_MS
+    const first = bucket === 'day' ? dayMs(dateOf(fromMs)) : dayMs(weekStart(new Date(fromMs).toISOString()))
+    for (let t = first; t <= toMs; t += step) labels.push(dateOf(t))
+  }
+  const index = new Map(labels.map((l, i) => [l, i] as const))
+  const values: Record<string, number[]> = Object.fromEntries(actors.map(a => [a, labels.map(() => 0)]))
+  for (const d of days) {
+    const i = index.get(keyOf(d.date))
+    if (i === undefined) continue
+    for (const [actor, c] of Object.entries(d.commits)) if (values[actor]) values[actor]![i]! += c
+  }
+  return { labels, values }
 }
 
 /** Every AI named anywhere in the PRs (so each can get its own switch), most active first. */
@@ -249,8 +304,28 @@ export const compact = (n: number): string => {
   return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ',')
 }
 
-export const RANGES = [7, 30, 90, 365] as const
+/** The ranges the Stats view offers, in days. `ALL_TIME` (0) reaches back to the first repo. */
+export const ALL_TIME = 0
+export const RANGES = [7, 30, 90, 180, 365, 730, 1825, ALL_TIME] as const
+
+/** What a range button says. Years are counted back from today, not calendar years. */
+export const rangeLabel = (days: number): string =>
+  days === ALL_TIME ? 'All time' : days === 730 ? '2 years' : days === 1825 ? '5 years' : `${days} days`
+
 export const sinceFor = (days: number, now: number): number => now - days * DAY_MS
+
+/**
+ * Where a range starts. `ALL_TIME` starts at the earliest thing known (the oldest repo, or failing that the
+ * oldest merged PR held), so it never means "from 1970" and never asks GitHub for years with nothing in them.
+ */
+export const rangeSince = (days: number, now: number, earliestMs: number | undefined): number =>
+  days === ALL_TIME ? Math.min(now, earliestMs ?? now - 365 * DAY_MS) : sinceFor(days, now)
+
+/** The earliest creation or merge date held, as epoch ms; undefined when nothing is held yet. */
+export const earliestKnown = (repos: readonly RepoCreated[], prs: readonly PrSummary[]): number | undefined => {
+  const times = [...repos.map(r => Date.parse(r.createdAt)), ...prs.map(p => Date.parse(p.mergedAt))].filter(Number.isFinite)
+  return times.length > 0 ? Math.min(...times) : undefined
+}
 
 // ---- Which dates still need fetching ----------------------------------------------------------------------
 

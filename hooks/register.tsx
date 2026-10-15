@@ -18,12 +18,15 @@ import {
   OTHERS,
   RANGES,
   YOU,
+  actorLabel,
   aggregate,
   aisIn,
   barCells,
   compact,
+  earliestKnown,
+  rangeLabel,
+  rangeSince,
   reposCreatedSince,
-  sinceFor,
 } from '../src/core/stats'
 import { loadStatsCache, refreshStats, statsAreFresh } from '../src/core/statsService'
 import type { Board, Checks, Level, PrView, RepoView, StatsBoard, StatsMode, StepState } from '../src/core/types'
@@ -426,14 +429,14 @@ export const register: Register = (on, options) => {
 
     /** The Stats view: who the shipped work is attributed to, by PR, commit and line, over a chosen range. */
     const statsTree = () => {
-      const sinceMs = sinceFor(s.range, now)
+      const sinceMs = rangeSince(s.range, now, earliestKnown(s.repos, s.prs))
       const agg = aggregate(s.prs, sinceMs, s.mode, s.hidden)
       const ais = aisIn(s.prs)
       const created = reposCreatedSince(s.repos, sinceMs)
       const sum = (pick: (a: (typeof agg.actors)[number]) => number) => agg.actors.reduce((n, a) => n + pick(a), 0)
       const totalCommits = sum(a => a.commits)
       const barWidth = Math.max(10, Math.min(36, columns - 50))
-      const nameWidth = Math.max(6, ...agg.actors.map(a => a.actor.length)) + 1
+      const nameWidth = Math.max(6, ...agg.actors.map(a => actorLabel(a.actor).length)) + 1
       const owner = b.owner || s.you
 
       const stacked = (parts: Array<{ actor: string; value: number }>, width: number) => {
@@ -469,7 +472,7 @@ export const register: Register = (on, options) => {
               <Button
                 key={`range-${d}`}
                 hotkey={String(i + 1)}
-                label={d === 365 ? 'Last year' : `${d} days`}
+                label={rangeLabel(d)}
                 variant={s.range === d ? 'primary' : 'secondary'}
                 onPress={() => {
                   void update($, stats, x => ({ ...x, range: d }))
@@ -530,18 +533,18 @@ export const register: Register = (on, options) => {
             <Box columnGap={2} marginBottom={1} flexWrap="wrap">
               <Svg
                 source={donutSvg(
-                  agg.actors.map(a => ({ label: a.actor, value: a.commits, color: chartColor(a.actor, ais) })),
+                  agg.actors.map(a => ({ label: actorLabel(a.actor), value: a.commits, color: chartColor(a.actor, ais) })),
                   `${Math.round(((agg.actors.find(a => a.actor === YOU)?.commits ?? 0) / totalCommits) * 100)}%`,
                   'You, by commits',
                 )}
-                alt={`Share of commits by author: ${agg.actors.map(a => `${a.actor} ${Math.round((a.commits / totalCommits) * 100)}%`).join(', ')}`}
+                alt={`Share of commits by author: ${agg.actors.map(a => `${actorLabel(a.actor)} ${Math.round((a.commits / totalCommits) * 100)}%`).join(', ')}`}
                 width={150}
                 height={150}
                 isInteractive
               />
               <Svg
-                source={legendSvg(agg.actors.map(a => ({ label: a.actor, color: chartColor(a.actor, ais) })), 220)}
-                alt={`Colours: ${agg.actors.map(a => a.actor).join(', ')}`}
+                source={legendSvg(agg.actors.map(a => ({ label: actorLabel(a.actor), color: chartColor(a.actor, ais) })), 220)}
+                alt={`Colours: ${agg.actors.map(a => actorLabel(a.actor)).join(', ')}`}
               />
             </Box>
           )}
@@ -551,7 +554,7 @@ export const register: Register = (on, options) => {
             return (
               <Box columnGap={1}>
                 <Text color={colorOf(a.actor, ais)} bold>
-                  {a.actor.padEnd(nameWidth)}
+                  {actorLabel(a.actor).padEnd(nameWidth)}
                 </Text>
                 <Text color={colorOf(a.actor, ais)}>{'█'.repeat(mine)}</Text>
                 <Text dimColor>{'░'.repeat(barWidth - mine)}</Text>
@@ -580,7 +583,7 @@ export const register: Register = (on, options) => {
                   source={barsSvg(
                     agg.repos.slice(0, 10).map(r => ({
                       label: r.repo,
-                      parts: r.actors.map(a => ({ label: a.actor, value: a.commits, color: chartColor(a.actor, ais) })),
+                      parts: r.actors.map(a => ({ label: actorLabel(a.actor), value: a.commits, color: chartColor(a.actor, ais) })),
                       note: `${r.prs} PR${r.prs === 1 ? '' : 's'}`,
                     })),
                     Math.max(320, Math.min(640, columns * 7)),
@@ -613,7 +616,7 @@ export const register: Register = (on, options) => {
                       label: w.start.slice(5),
                       parts: Object.entries(w.prs)
                         .sort(([x], [y]) => (x === YOU ? -1 : y === YOU ? 1 : 0))
-                        .map(([actor, value]) => ({ label: actor, value, color: chartColor(actor, ais) })),
+                        .map(([actor, value]) => ({ label: actorLabel(actor), value, color: chartColor(actor, ais) })),
                     })),
                     Math.max(320, Math.min(640, columns * 7)),
                   )}

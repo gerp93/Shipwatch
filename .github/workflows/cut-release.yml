@@ -1,20 +1,10 @@
-# Template: copy to .github/workflows/cut-release.yml in a consumer repo
-# and fill in the two TODOs. This is the operator-facing entry point —
-# GitHub Actions requires `workflow_dispatch` to live in the repo whose
-# Actions tab you click "Run workflow" from, so this thin file can't itself
-# be centralized. Everything after tagging (the actual build) IS
-# centralized: this calls a reusable workflow in KVG_Standards.
+# Template: copy to .github/workflows/cut-release.yml in a repo that is a Claude Code plugin AND ships a
+# companion Electron app from a subfolder (see claude-plugins.md, "A plugin with a companion app").
+# It replaces templates/cut-release.yml for that repo; pair it with auto-release-plugin-app.yml.
 #
-# Why workflow_dispatch with an explicit version, not an automatic bump:
-# tagging is a deliberate, auditable act an operator triggers, not something
-# that fires on every push. It also sidesteps a GitHub quirk: a tag pushed
-# from *inside* a workflow using the default GITHUB_TOKEN does NOT trigger
-# other workflows' `on: push: tags` — GitHub suppresses workflows recursively
-# triggering each other. Calling the build workflow directly via
-# `workflow_call` (the `release:` job below) sidesteps that entirely.
-#
-# See gerp93/gameshell-deploy's cut-release.yml + release.yml for the
-# original pattern this was extracted from.
+# An operator-run release with an explicit version (see templates/cut-release.yml for why this is a
+# workflow_dispatch and why it calls the build workflows directly). Unlike the automatic release, this one
+# always builds the app's installers: asking for a deliberately numbered release means shipping both.
 
 name: Cut Release
 
@@ -41,9 +31,10 @@ jobs:
 
       - name: Validate and normalize version
         id: version
+        env:
+          RAW: ${{ inputs.version }}
         run: |
           set -e
-          RAW="${{ inputs.version }}"
           VERSION="v${RAW#v}"
           if ! [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "Invalid version: '$RAW' — expected X.Y.Z or vX.Y.Z (e.g. 1.2.3)." >&2
@@ -64,11 +55,21 @@ jobs:
           git tag -a "$VERSION" -m "$VERSION"
           git push origin "$VERSION"
 
-  release:
+  plugin:
     needs: tag
     uses: gerp93/KVG_Standards/.github/workflows/release-claude-plugin.yml@main
     with:
       version: ${{ needs.tag.outputs.version }}
-      plugin_name: shipwatch
+      plugin_name: shipwatch # as listed in .claude-plugin/marketplace.json
+    permissions:
+      contents: write
+
+  app:
+    needs: [tag, plugin]
+    uses: gerp93/KVG_Standards/.github/workflows/release-electron.yml@main
+    with:
+      version: ${{ needs.tag.outputs.version }}
+      app_dir: app
+      skip_release_notes: true # the plugin job wrote the release text
     permissions:
       contents: write

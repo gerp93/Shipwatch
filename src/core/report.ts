@@ -7,6 +7,7 @@
 // computed by the same core code as everywhere else.
 
 import { REPORT_CLIENT_JS } from './reportClient.generated'
+import { THEMES_CSS } from './themes.generated'
 import type { Board, StatsBoard } from './types'
 
 /** What the page is generated from. Everything the page shows is derived from this, nothing is fetched. */
@@ -15,6 +16,8 @@ export type ReportData = {
   generatedAt: number
   board: Pick<Board, 'owner' | 'repos'>
   stats: Pick<StatsBoard, 'prs' | 'repos' | 'you'>
+  /** A small image as a `data:` address, shown beside the title. Optional; the pane's report has none. */
+  logo?: string
 }
 
 const BS = String.fromCharCode(92)
@@ -48,11 +51,21 @@ table.compact{width:auto;min-width:340px}
 .big{font-size:22px;font-weight:600}
 .pill{display:inline-block;padding:1px 8px;border-radius:10px;font-size:12px;color:#fff;background:var(--idle);white-space:nowrap}
 .pill.fail{background:var(--fail)}.pill.running{background:var(--running)}.pill.ready{background:var(--ready)}.pill.pending{background:var(--pending)}.pill.draft{background:var(--draft)}
-.step{display:inline-block;font-size:12px;margin-right:6px;padding:0 6px;border-radius:4px;border:1px solid var(--line);color:var(--dim)}
+.steps{display:flex;flex-wrap:wrap;gap:6px}td.where{min-width:270px}
+.step{display:inline-block;font-size:12px;line-height:18px;padding:0 7px;border-radius:4px;border:1px solid var(--line);color:var(--dim);white-space:nowrap}
 .step.done{color:var(--ready);border-color:var(--ready)}.step.running{color:var(--running);border-color:var(--running)}.step.failed{color:var(--fail);border-color:var(--fail)}
 .dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px}
 .chip{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:2px 4px 2px 10px}.x{font:inherit;background:none;border:0;color:var(--dim);cursor:pointer;padding:0 6px}
-.svg{max-width:100%;overflow-x:auto}
+.svg{max-width:100%;overflow-x:auto}.svg svg{max-width:100%;height:auto}
+.logo{height:36px;width:auto;margin-right:4px}select.theme{font:inherit;background:var(--card);color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:4px 8px}
+/* Charts take their text colour from the page so they stay readable on any theme. */
+body{--chart-fg:var(--fg);--chart-strong:var(--fg);--chart-dim:var(--dim)}
+/* A VisualAssault theme (a body class from the vendored sheet below) re-points the page's own colours at the shared tokens. */
+body[class$="-theme"]{--bg:var(--color-bg);--fg:var(--color-text);--dim:var(--color-text-muted);--line:var(--color-border);--card:var(--color-surface);
+--accent:var(--color-accent-blue);--on:var(--color-primary-action);--onfg:var(--color-primary-action-text,var(--color-text));
+--fail:var(--color-accent-red);--ready:var(--color-accent-green);--running:var(--color-accent-blue);--pending:var(--color-accent-muted);--draft:var(--color-text-muted);--idle:var(--color-accent-muted)}
+body[class$="-theme"] .pill{color:var(--color-bg)}
+${THEMES_CSS}
 `
 
 /** The report page for `data`. */

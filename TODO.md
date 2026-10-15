@@ -12,12 +12,15 @@ and this repo's `REPO_SCOPE.md` entry for that). Just what's not built yet.
 
 -
 
-## Standalone app (app/): not done yet
+## Standalone app (app/)
 
-The app runs and shows the report, but is not yet to the KVG standard for an Electron app:
+Brought up to the KVG standard for an Electron app in this change: logo and icons, VisualAssault themes (pinned
+to a tag), `electron-updater`, and the shared release wiring. Still to do:
 
-- Logo and icons: `assets/logo.png`, generated icon sizes, the window and installer icon.
-- Theming from VisualAssault, pinned to a tag (the report page has its own CSS for now).
-- Update check with `electron-updater`.
-- Release wiring: the `*-plugin-app.yml` templates from KVG_Standards (blocked on the shared-workflow PR being merged).
-- Refresh on a timer or tray, OS notifications, and keeping the report's filters across a refresh.
+- Refresh on a timer or from a tray, OS notifications, and keeping the report's filters across a refresh.
+- Needs real-world verification: the installers and the self-update have not run yet (the first release that
+  includes `app/` is their first real test); check the installer icon, an in-place update from one release to the
+  next, and `perUser` vs `perMachine` install behaviour on Windows.
+- The logo was supplied as a JPEG with a checkerboard baked in, so `assets/logo.png` is a colour-keyed cut-out
+  with some faint residue at its edges. Replace it with a true transparent PNG when there is one, then run
+  `npm run icons` in `app/`.

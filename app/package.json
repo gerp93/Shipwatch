@@ -12,23 +12,54 @@
     "start": "npm run build && electron .",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "node build.mjs --tests && node --test \"dist-test/*.spec.js\"",
-    "package": "electron-builder"
+    "package": "electron-builder",
+    "icons": "node scripts/generate-icons.mjs"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
     "electron": "^44.7.2",
     "electron-builder": "^26.0.0",
     "esbuild": "0.25.5",
+    "sharp": "^0.35.5",
     "typescript": "^5.7.0"
   },
   "build": {
     "appId": "com.gerp93.shipwatch",
     "productName": "Shipwatch",
-    "directories": { "output": "release" },
-    "files": ["dist/**", "package.json"],
-    "win": { "target": ["nsis"] },
-    "mac": { "target": ["dmg"], "category": "public.app-category.developer-tools" },
-    "linux": { "target": ["AppImage"], "category": "Development" },
-    "publish": [{ "provider": "github", "owner": "gerp93", "repo": "Shipwatch" }]
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**",
+      "assets/**",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        "nsis"
+      ]
+    },
+    "mac": {
+      "target": [
+        "dmg"
+      ],
+      "category": "public.app-category.developer-tools"
+    },
+    "linux": {
+      "target": [
+        "AppImage"
+      ],
+      "category": "Development"
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "gerp93",
+        "repo": "Shipwatch"
+      }
+    ]
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.9"
   }
 }

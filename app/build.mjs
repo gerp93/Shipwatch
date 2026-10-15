@@ -13,5 +13,5 @@ if (process.argv.includes('--tests')) {
     .map(f => join('src', f))
   await build({ ...common, entryPoints: tests, outdir: 'dist-test', outExtension: { '.js': '.spec.js' } })
 } else {
-  await build({ ...common, entryPoints: ['src/main.ts'], outfile: 'dist/main.js', external: ['electron'], minify: false })
+  await build({ ...common, entryPoints: ['src/main.ts'], outfile: 'dist/main.js', external: ['electron', 'electron-updater'], minify: false })
 }

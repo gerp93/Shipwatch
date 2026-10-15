@@ -4,9 +4,10 @@
 //
 // Bundled by scripts/build-report.mjs into src/core/reportClient.generated.ts. Do not import a host API.
 
-import { barsSvg, chartColor, donutSvg, legendSvg, weeksSvg } from '../core/charts'
+import { barsSvg, chartColor, donutSvg, legendSvg, linesSvg, weeksSvg } from '../core/charts'
 import type { ReportData } from '../core/report'
-import { RANGES, YOU, aggregate, aisIn, compact, reposCreatedSince, sinceFor } from '../core/stats'
+import { THEME_IDS } from '../core/themes.generated'
+import { RANGES, YOU, actorLabel, aggregate, aisIn, bucketFor, commitSeries, compact, earliestKnown, rangeLabel, rangeSince, reposCreatedSince } from '../core/stats'
 import type { Level, RepoView, StatsMode } from '../core/types'
 
 const data = (window as unknown as { SHIPWATCH_DATA: ReportData }).SHIPWATCH_DATA
@@ -38,7 +39,7 @@ type State = {
 
 const state: State = {
   view: data.board.repos.length > 0 ? 'dashboard' : 'stats',
-  range: 30,
+  range: 365,
   mode: 'combined',
   hidden: [],
   repo: null,
@@ -149,7 +150,7 @@ function dashboard(): HTMLElement {
             { class: `lv-${r.level}` },
             el('td', {}, el('span', { class: `pill ${r.level}` }, r.isInfra ? 'Runner outage' : LEVEL_LABEL[r.level])),
             el('td', {}, el('a', { href: r.url, target: '_blank', rel: 'noopener' }, r.name), r.headline ? el('div', { class: 'dim' }, r.headline) : null),
-            el('td', {}, ...r.steps.map((s, i) => el('span', { class: `step ${s}`, title: `${STEP_NAMES[i]}: ${s}` }, STEP_NAMES[i]))),
+            el('td', { class: 'where' }, el('div', { class: 'steps' }, ...r.steps.map((s, i) => el('span', { class: `step ${s}`, title: `${STEP_NAMES[i]}: ${s}` }, STEP_NAMES[i])))),
             el(
               'td',
               {},
@@ -170,10 +171,25 @@ function dashboard(): HTMLElement {
 
 // ---- Stats -------------------------------------------------------------------------------------------------
 
+/** Commits over time as one line per who, counted on the day their PR merged. */
+function commitsOverTime(agg: ReturnType<typeof aggregate>, sinceMs: number, color: (actor: string) => string): HTMLElement {
+  const spanDays = (data.generatedAt - sinceMs) / 86_400_000
+  const bucket = bucketFor(spanDays)
+  const actors = agg.actors.map(a => a.actor)
+  const { labels, values } = commitSeries(agg.days, actors, bucket, sinceMs, data.generatedAt)
+  const per = bucket === 'day' ? 'day' : bucket === 'week' ? 'week' : 'month'
+  return el(
+    'div',
+    {},
+    el('h3', {}, `Commits per ${per}`, el('span', { class: 'dim' }, ' · by the day their PR merged')),
+    raw(linesSvg(labels, actors.map(a => ({ label: actorLabel(a), color: color(a), values: values[a] ?? [] })), 760, 210)),
+  )
+}
+
 function stats(): HTMLElement {
   const s = data.stats
   const ais = aisIn(s.prs)
-  const sinceMs = sinceFor(state.range, data.generatedAt)
+  const sinceMs = rangeSince(state.range, data.generatedAt, earliestKnown(s.repos, s.prs))
   const inScope = state.repo ? s.prs.filter(p => p.repo === state.repo) : s.prs
   const agg = aggregate(inScope, sinceMs, state.mode, state.hidden)
   const created = reposCreatedSince(s.repos, sinceMs)
@@ -203,7 +219,12 @@ function stats(): HTMLElement {
   return el(
     'section',
     {},
-    el('div', { class: 'row wrap' }, ...RANGES.map(d => button(d === 365 ? 'Last year' : `${d} days`, state.range === d, () => ((state.range = d), draw())))),
+    el(
+      'div',
+      { class: 'row wrap' },
+      ...RANGES.map(d => button(rangeLabel(d), state.range === d, () => ((state.range = d), draw()))),
+      el('span', { class: 'dim' }, `${new Date(sinceMs).toLocaleDateString()} to ${new Date(data.generatedAt).toLocaleDateString()}`),
+    ),
     el(
       'div',
       { class: 'row wrap' },
@@ -231,11 +252,11 @@ function stats(): HTMLElement {
       ? el(
           'div',
           { class: 'row wrap top' },
-          raw(donutSvg(agg.actors.map(a => ({ label: a.actor, value: a.commits, color: color(a.actor) })), `${Math.round((you / commits) * 100)}%`, 'You, by commits')),
+          raw(donutSvg(agg.actors.map(a => ({ label: actorLabel(a.actor), value: a.commits, color: color(a.actor) })), `${Math.round((you / commits) * 100)}%`, 'You, by commits')),
           el(
             'div',
             {},
-            raw(legendSvg(agg.actors.map(a => ({ label: a.actor, color: color(a.actor) })), 260)),
+            raw(legendSvg(agg.actors.map(a => ({ label: actorLabel(a.actor), color: color(a.actor) })), 260)),
             el(
               'table',
               { class: 'compact' },
@@ -247,7 +268,7 @@ function stats(): HTMLElement {
                   el(
                     'tr',
                     {},
-                    el('td', {}, el('span', { class: 'dot', style: `background:${color(a.actor)}` }), a.actor),
+                    el('td', {}, el('span', { class: 'dot', style: `background:${color(a.actor)}` }), actorLabel(a.actor)),
                     el('td', {}, `${Math.round((a.commits / commits) * 100)}%`),
                     el('td', {}, compact(a.commits)),
                     el('td', {}, `+${compact(a.adds)} −${compact(a.dels)}`),
@@ -261,18 +282,19 @@ function stats(): HTMLElement {
       : null,
     agg.mixed > 0 ? el('p', { class: 'dim' }, `${agg.mixed} PR${agg.mixed === 1 ? ' has' : 's have'} commits from more than one of the above.`) : null,
     el('p', { class: 'dim' }, "Attributed by each commit's author and Co-Authored-By lines, not by who typed the code. Lines are added and removed in commits, so a commit that rewrites an earlier one counts again."),
+    agg.days.length > 0 ? commitsOverTime(agg, sinceMs, color) : null,
     agg.weeks.length > 0
       ? el(
           'div',
           {},
-          el('h3', {}, 'PRs merged per week'),
+          el('h3', {}, 'PRs merged per week', el('span', { class: 'dim' }, ' · last 26 weeks')),
           raw(
             weeksSvg(
               agg.weeks.slice(-26).map(w => ({
                 label: w.start.slice(5),
                 parts: Object.entries(w.prs)
                   .sort(([x], [y]) => (x === YOU ? -1 : y === YOU ? 1 : 0))
-                  .map(([actor, value]) => ({ label: actor, value, color: color(actor) })),
+                  .map(([actor, value]) => ({ label: actorLabel(actor), value, color: color(actor) })),
               })),
               760,
               170,
@@ -289,7 +311,7 @@ function stats(): HTMLElement {
             barsSvg(
               repoRows.slice(0, 12).map(r => ({
                 label: r.repo,
-                parts: r.actors.map(a => ({ label: a.actor, value: a.commits, color: color(a.actor) })),
+                parts: r.actors.map(a => ({ label: actorLabel(a.actor), value: a.commits, color: color(a.actor) })),
                 note: `${r.prs} PR${r.prs === 1 ? '' : 's'}`,
               })),
               760,
@@ -343,15 +365,44 @@ function stats(): HTMLElement {
 
 const root = document.getElementById('app')!
 
+// A VisualAssault theme is chosen from the header and remembered; storage can be unavailable, so it is optional.
+const THEME_KEY = 'shipwatch-theme'
+const themeLabel = (id: string): string => id.replace(/-theme$/, '').split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')
+const storedTheme = (): string => {
+  try {
+    const t = localStorage.getItem(THEME_KEY) ?? ''
+    return THEME_IDS.includes(t) ? t : ''
+  } catch {
+    return ''
+  }
+}
+const applyTheme = (id: string): void => {
+  document.body.className = id
+  try {
+    if (id) localStorage.setItem(THEME_KEY, id)
+    else localStorage.removeItem(THEME_KEY)
+  } catch {
+    // Not remembered; still applied for this page.
+  }
+}
+applyTheme(storedTheme())
+
 function draw(): void {
   const owner = data.board.owner || data.stats.you || 'GitHub'
   root.replaceChildren(
     el(
       'header',
       { class: 'row wrap' },
+      data.logo ? el('img', { class: 'logo', src: data.logo, alt: '' }) : null,
       el('h1', {}, `${owner} · Shipwatch`),
       el('span', { class: 'dim' }, `generated ${new Date(data.generatedAt).toLocaleString()}`),
       el('span', { class: 'grow' }),
+      el(
+        'select',
+        { class: 'theme', title: 'Theme', 'aria-label': 'Theme', onchange: (e: Event) => applyTheme((e.target as HTMLSelectElement).value) },
+        el('option', { value: '' }, 'Default theme'),
+        ...THEME_IDS.map(id => el('option', { value: id, selected: id === document.body.className ? 'selected' : undefined }, themeLabel(id))),
+      ),
       button('Dashboard', state.view === 'dashboard', () => ((state.view = 'dashboard'), draw())),
       button('Stats', state.view === 'stats', () => ((state.view = 'stats'), draw())),
     ),

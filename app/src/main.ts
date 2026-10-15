@@ -14,6 +14,7 @@ import { FileStore, nodeIO } from './adapters'
 import { collect } from './collect'
 import { readConfig } from './config'
 import { errorPage, isSafeExternalUrl, loadingPage, progressFraction } from './pages'
+import { checkForUpdatesNow, setupAutoUpdater } from './updates'
 
 const REPO_URL = 'https://github.com/gerp93/Shipwatch'
 
@@ -22,6 +23,17 @@ let isRefreshing = false
 const infraVerdicts: InfraVerdicts = new Map()
 
 const userFile = (name: string): string => join(app.getPath('userData'), name)
+/** Files shipped inside the app (the icons), beside the bundled code whether run from source or packaged. */
+const assetFile = (name: string): string => join(app.getAppPath(), 'assets', name)
+
+/** The logo as a `data:` address for the report's header; the page has no network and no files beside it. */
+const readLogo = async (): Promise<string | undefined> => {
+  try {
+    return `data:image/png;base64,${(await readFile(assetFile('logo.png'))).toString('base64')}`
+  } catch {
+    return undefined
+  }
+}
 
 /** Shows `html` in the window without a file or a network address behind it. */
 const showHtml = (html: string): Promise<void> => win!.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`)
@@ -50,9 +62,9 @@ async function refresh(): Promise<void> {
       infraVerdicts,
       onProgress: say,
     })
-    // The report is a real file, not a data: address, because a year of history is too big for one.
+    // The report is a real file, not a data: address, because years of history are too big for one.
     const page = userFile('report.html')
-    await writeFile(page, renderReport(data), 'utf8')
+    await writeFile(page, renderReport({ ...data, logo: await readLogo() }), 'utf8')
     await win.loadFile(page)
     if (statsError) win.setTitle(`Shipwatch - stats incomplete: ${statsError}`.slice(0, 120))
     else win.setTitle('Shipwatch')
@@ -81,6 +93,7 @@ function setupMenu(): void {
   const help: MenuItemConstructorOptions[] = [
     { label: 'Shipwatch on GitHub', click: () => void shell.openExternal(REPO_URL) },
     { label: 'Report an issue', click: () => void shell.openExternal(`${REPO_URL}/issues/new`) },
+    { label: 'Check for updates', click: () => void checkForUpdatesNow(() => win) },
     { type: 'separator' },
     { label: `Version ${app.getVersion()}`, enabled: false },
   ]
@@ -97,6 +110,7 @@ function createWindow(): void {
     width: 1180,
     height: 840,
     title: 'Shipwatch',
+    icon: assetFile('icon.png'),
     webPreferences: { contextIsolation: true, sandbox: true, nodeIntegration: false },
   })
 
@@ -138,6 +152,7 @@ if (!app.requestSingleInstanceLock()) {
     setupMenu()
     createWindow()
     void refresh()
+    setupAutoUpdater(() => win)
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) {
         createWindow()
