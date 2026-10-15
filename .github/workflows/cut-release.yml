@@ -1,0 +1,74 @@
+# Template: copy to .github/workflows/cut-release.yml in a consumer repo
+# and fill in the two TODOs. This is the operator-facing entry point —
+# GitHub Actions requires `workflow_dispatch` to live in the repo whose
+# Actions tab you click "Run workflow" from, so this thin file can't itself
+# be centralized. Everything after tagging (the actual build) IS
+# centralized: this calls a reusable workflow in KVG_Standards.
+#
+# Why workflow_dispatch with an explicit version, not an automatic bump:
+# tagging is a deliberate, auditable act an operator triggers, not something
+# that fires on every push. It also sidesteps a GitHub quirk: a tag pushed
+# from *inside* a workflow using the default GITHUB_TOKEN does NOT trigger
+# other workflows' `on: push: tags` — GitHub suppresses workflows recursively
+# triggering each other. Calling the build workflow directly via
+# `workflow_call` (the `release:` job below) sidesteps that entirely.
+#
+# See gerp93/gameshell-deploy's cut-release.yml + release.yml for the
+# original pattern this was extracted from.
+
+name: Cut Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release, e.g. "1.2.3" or "v1.2.3"'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate and normalize version
+        id: version
+        run: |
+          set -e
+          RAW="${{ inputs.version }}"
+          VERSION="v${RAW#v}"
+          if ! [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Invalid version: '$RAW' — expected X.Y.Z or vX.Y.Z (e.g. 1.2.3)." >&2
+            exit 1
+          fi
+          if git rev-parse "$VERSION" >/dev/null 2>&1; then
+            echo "Tag $VERSION already exists." >&2
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Create and push tag
+        run: |
+          set -e
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          VERSION="${{ steps.version.outputs.version }}"
+          git tag -a "$VERSION" -m "$VERSION"
+          git push origin "$VERSION"
+
+  release:
+    needs: tag
+    uses: gerp93/KVG_Standards/.github/workflows/release-claude-plugin.yml@claude/claude-plugin-standard
+    with:
+      version: ${{ needs.tag.outputs.version }}
+      plugin_name: shipwatch
+    permissions:
+      contents: write

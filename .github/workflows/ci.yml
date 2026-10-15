@@ -1,0 +1,18 @@
+# Template: copy to .github/workflows/ci.yml in a Claude Code plugin repo
+# (a mod, or any plugin). Like templates/ci.yml for Go, it needs no local
+# logic: the whole thing runs in KVG_Standards via workflow_call. It validates
+# the plugin and runs its *.test.ts files.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  ci:
+    uses: gerp93/KVG_Standards/.github/workflows/ci-claude-plugin.yml@claude/claude-plugin-standard
+    # with:
+    #   plugin_dir: .   # only if the plugin isn't at the repo root

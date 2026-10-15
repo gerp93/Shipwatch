@@ -1,6 +1,5 @@
 {
   "name": "shipwatch",
-  "version": "0.1.0",
   "description": "Dashboard pane for every repo under a GitHub owner: running builds, open PRs and a per-repo stepper from PR to release.",
   "author": {
     "name": "gerp93"
