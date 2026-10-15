@@ -38,3 +38,31 @@ jobs:
 
       - name: Report page script typechecks
         run: npx --yes -p typescript@5 tsc --noEmit -p src/report/tsconfig.json
+
+  app:
+    # The Electron app (app/) shares the core with the plugin. It is built and tested here; releases of its
+    # installers go through the shared release workflow (see README, "The standalone app").
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      # Skip lifecycle scripts: the Electron binary is not needed to typecheck, test or bundle.
+      - run: npm ci --ignore-scripts
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
+      - name: Bundle the main process
+        run: npm run build
