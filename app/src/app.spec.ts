@@ -4,8 +4,12 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
+import type { IO } from '../../src/core/ports'
+
 import { FileStore, nodeIO } from './adapters'
 import { readConfig } from './config'
+import { mergeFromReport } from './merge'
+import type { Question } from './merge'
 import { errorPage, isSafeExternalUrl, loadingPage, progressFraction } from './pages'
 
 const tempFile = async (name: string): Promise<string> => join(await mkdtemp(join(tmpdir(), 'shipwatch-')), name)
@@ -86,4 +90,96 @@ test('the loading page shows a running clock and lets the app set progress', () 
   // Only this static page may run script; the error page may not.
   assert.ok(html.includes("script-src 'unsafe-inline'"))
   assert.ok(!errorPage('x').includes('<script'))
+})
+
+// ---- Merge from the report -------------------------------------------------------------------------------
+
+const prAnswer = (over: object = {}) => ({
+  data: {
+    repository: {
+      autoMergeAllowed: true,
+      mergeCommitAllowed: true,
+      pullRequest: {
+        id: 'PR_1',
+        number: 7,
+        title: 'Change',
+        state: 'OPEN',
+        isDraft: false,
+        mergeable: 'MERGEABLE',
+        mergeStateStatus: 'CLEAN',
+        headRefOid: 'abc123',
+        autoMergeRequest: null,
+        commits: { nodes: [{ commit: { statusCheckRollup: { state: 'SUCCESS' } } }] },
+        ...over,
+      },
+    },
+  },
+})
+
+/** Deps whose GitHub answers `replies` in turn (the signed-in `gh` is absent, so the token is used). */
+const mergeDeps = (replies: unknown[], answer: boolean, asked: Question[] = []) => {
+  let calls = 0
+  const io: IO = {
+    run: async () => ({ exitCode: 1, stdout: '', stderr: '' }),
+    fetch: async () => {
+      calls++
+      return { status: 200, ok: true, text: JSON.stringify(replies.shift()) }
+    },
+  }
+  const confirm = async (q: Question): Promise<boolean> => (asked.push(q), answer)
+  return { deps: { io, config: readConfig({}, { GITHUB_TOKEN: 't' }), owner: 'o', known: new Set(['app#7']), confirm }, calls: () => calls }
+}
+
+test('a merge request from the page is checked before anything is read from GitHub', async () => {
+  const { deps, calls } = mergeDeps([], true)
+  for (const [repo, n] of [['../x', 7], ['app', 0], ['app', 1.5], ['app', '7'], [7, 7], ['app/evil', 7]] as const) {
+    assert.deepEqual(await mergeFromReport(deps, repo, n), { ok: false, message: 'That is not a pull request.', changed: false })
+  }
+  // A well-formed request for a PR the report does not list is refused too.
+  const other = await mergeFromReport(deps, 'other', 7)
+  assert.equal(other.ok, false)
+  assert.ok(other.message.includes('not on this report'))
+  assert.equal(calls(), 0)
+})
+
+test('a PR GitHub says cannot be merged is refused without asking the user', async () => {
+  const asked: Question[] = []
+  const { deps } = mergeDeps([prAnswer({ isDraft: true })], true, asked)
+  const result = await mergeFromReport(deps, 'app', 7)
+  assert.equal(result.ok, false)
+  assert.equal(result.changed, false)
+  assert.ok(result.message.includes('draft'))
+  assert.equal(asked.length, 0)
+})
+
+test('the user is asked first, and declining changes nothing', async () => {
+  const asked: Question[] = []
+  const { deps, calls } = mergeDeps([prAnswer()], false, asked)
+  const result = await mergeFromReport(deps, 'app', 7)
+  assert.deepEqual(result, { ok: false, message: 'Cancelled.', changed: false })
+  assert.equal(asked.length, 1)
+  assert.equal(asked[0]!.action, 'Merge')
+  assert.equal(calls(), 1) // only the read; no mutation was sent
+})
+
+test('confirming merges, and says the report is now out of date', async () => {
+  const { deps, calls } = mergeDeps([prAnswer(), { data: { mergePullRequest: { pullRequest: { state: 'MERGED' } } } }], true)
+  assert.deepEqual(await mergeFromReport(deps, 'app', 7), { ok: true, message: 'Merged #7.', changed: true })
+  assert.equal(calls(), 2)
+})
+
+test('a PR still waiting on checks is offered auto-merge, worded as such', async () => {
+  const asked: Question[] = []
+  const pending = prAnswer({ mergeStateStatus: 'BLOCKED', commits: { nodes: [{ commit: { statusCheckRollup: { state: 'PENDING' } } }] } })
+  const { deps } = mergeDeps([pending, { data: { enablePullRequestAutoMerge: { pullRequest: { autoMergeRequest: { enabledAt: 'x' } } } } }], true, asked)
+  const result = await mergeFromReport(deps, 'app', 7)
+  assert.equal(result.ok, true)
+  assert.ok(asked[0]!.title.includes('when its checks pass'))
+  assert.equal(asked[0]!.action, 'Turn on auto-merge')
+})
+
+test('an error from GitHub comes back as a message, not a crash', async () => {
+  const { deps } = mergeDeps([prAnswer(), { errors: [{ message: 'Resource not accessible by personal access token' }], data: { mergePullRequest: null } }], true)
+  const result = await mergeFromReport(deps, 'app', 7)
+  assert.deepEqual(result, { ok: false, message: 'Resource not accessible by personal access token', changed: false })
 })

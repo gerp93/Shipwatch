@@ -205,5 +205,15 @@ user-data folder (`%APPDATA%/Shipwatch` on Windows): `owner`, `includeForks`, `m
 `ignore`. `SHIPWATCH_OWNER` overrides the owner. The first run loads a year of merged PRs; later runs fetch only what
 is new.
 
+**Merging.** In the app (not in the Claude pane, and not in a report opened in a browser), an open PR that could merge
+gets a **Merge** button in the report: a PR that is not a draft, has no conflict and no failing check. A PR whose checks
+are still running gets **Merge when checks pass**. Clicking asks GitHub about the PR right then, then shows a native
+confirmation (the page cannot answer it); only after you confirm does anything change. It merges a clean PR now, or turns
+on GitHub's auto-merge for one that is waiting; it never bypasses branch protection or required checks, and a refusal
+from GitHub is shown as is. The merge uses the repo's own preference (a merge commit, else squash, else rebase), and
+auto-merge needs "Allow auto-merge" turned on for the repo. The `gh` sign-in from `gh auth login` already covers it
+(its `repo` scope includes merging); a `GITHUB_TOKEN` fallback needs write access to pull requests and contents, where
+reading alone was enough before.
+
 The app is a second product in the same repo: see [KVG_Standards' claude-plugins.md](https://github.com/gerp93/KVG_Standards/blob/main/claude-plugins.md)
 ("A plugin with a companion app"). There is deliberately no `package.json` at the repo root.
