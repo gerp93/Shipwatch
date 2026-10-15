@@ -45,12 +45,59 @@ export const pace = (budget: Budget | undefined, now: number, wantedMs: number):
   return { delayMs: Math.min(MAX_SLOWED_MS, Math.max(wantedMs, Math.ceil(evenly))), paused: false }
 }
 
+/** What GitHub's free `rate_limit` endpoint says about GraphQL: points left (when told) and when the hour resets, epoch ms. */
+export type GraphqlLimit = { remaining: number | undefined; resetAt: number }
+
+/**
+ * A refusal for rate limiting means one of two things, and they need different handling. With the hourly
+ * allowance spent, nothing works until the reset. With allowance still left, GitHub is slowing a burst of
+ * requests (a short-term limit that clears in a minute or two). The refusal's wording is the same for both,
+ * so this asks how many points are left.
+ */
+export const isBurstLimit = (limit: GraphqlLimit | undefined): boolean => typeof limit?.remaining === 'number' && limit.remaining > 0
+
+/** How long to wait out a burst limit. */
+export const BURST_PAUSE_MS = 90_000
+
+export type LimitAdvice = {
+  /** What to tell the person. */
+  message: string
+  /** True for the short-term burst limit, false when the hourly allowance is spent (or unknown). */
+  burst: boolean
+  /** How long until it is worth asking again. */
+  retryInMs: number
+}
+
+/** Says which limit was hit, when to try again, and what to tell the person. */
+export const adviseOnLimit = (limit: GraphqlLimit | undefined, now: number, format: (ms: number) => string = timeOf): LimitAdvice => {
+  if (isBurstLimit(limit)) {
+    return {
+      burst: true,
+      retryInMs: BURST_PAUSE_MS,
+      message:
+        `GitHub is briefly slowing requests from this account (a short-term limit on how fast they come in, not the hourly allowance: ${limit!.remaining!.toLocaleString('en-US')} points are still left). ` +
+        'It usually clears within a minute or two, and Shipwatch will try again by itself.',
+    }
+  }
+  const resetAt = limit?.resetAt
+  return {
+    burst: false,
+    retryInMs: resetAt && resetAt > now ? resetAt - now + RESET_MARGIN_MS : 60_000,
+    message: rateLimitMessage(resetAt, now, format),
+  }
+}
+
 const timeOf = (ms: number): string => new Date(ms).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
 
 /** What to tell the person when GitHub refuses for rate limiting; `resetAt` is epoch ms when known. */
 export const rateLimitMessage = (resetAt: number | undefined, now: number, format: (ms: number) => string = timeOf): string =>
   "GitHub's hourly API allowance for this account is used up. It is shared by everything signed in as you (every Claude session running Shipwatch, the gh CLI, other tools). " +
   (resetAt && resetAt > now ? `It resets at ${format(resetAt)}; Shipwatch will carry on then.` : 'Shipwatch will try again shortly.')
+
+/** What a long load says when it stops to leave the reserve alone. */
+export const reserveMessage = (resetAt: number, now: number, format: (ms: number) => string = timeOf): string =>
+  "Stopped to keep part of GitHub's hourly allowance free for your other tools (gh, other sessions). " +
+  (resetAt > now ? `It resets at ${format(resetAt)}; choose Refresh then to carry on from what is saved.` : 'Choose Refresh to carry on from what is saved.')
 
 /** What a throttled or paused dashboard says about itself. */
 export const throttleNote = (budget: Budget, p: Pace, format: (ms: number) => string = timeOf): string =>

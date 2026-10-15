@@ -67,3 +67,13 @@ test('opening the report uses the platform default program', () => {
   expect(openArgv(false, true, '/tmp/r.html')).toEqual(['open', '/tmp/r.html'])
   expect(openArgv(false, false, '/tmp/r.html')).toEqual(['xdg-open', '/tmp/r.html'])
 })
+
+test('a page made while stats are still loading says so, and can be filled in afterwards', () => {
+  const html = renderReport(data({ statsStatus: { state: 'loading', text: 'part 2 of 9', fraction: 0.1 } }))
+  expect(html).toContain('"statsStatus":{"state":"loading","text":"part 2 of 9","fraction":0.1}')
+  // The hooks the app calls to hand the page the history as it arrives.
+  expect(html).toContain('shipwatchLive')
+  expect(html).toContain('setStats')
+  expect(html).toContain('setStatus')
+  expect(renderReport(data())).not.toContain('"statsStatus"')
+})

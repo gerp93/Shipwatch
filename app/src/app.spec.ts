@@ -8,6 +8,7 @@ import type { IO } from '../../src/core/ports'
 
 import { FileStore, nodeIO } from './adapters'
 import { readConfig } from './config'
+import { setStatsScript, setStatusScript, throttled } from './live'
 import { mergeFromReport } from './merge'
 import type { Question } from './merge'
 import { errorPage, isSafeExternalUrl, loadingPage, progressFraction } from './pages'
@@ -182,4 +183,32 @@ test('an error from GitHub comes back as a message, not a crash', async () => {
   const { deps } = mergeDeps([prAnswer(), { errors: [{ message: 'Resource not accessible by personal access token' }], data: { mergePullRequest: null } }], true)
   const result = await mergeFromReport(deps, 'app', 7)
   assert.deepEqual(result, { ok: false, message: 'Resource not accessible by personal access token', changed: false })
+})
+
+test('what the page is told while history loads is a literal that cannot end the script early or run anything', () => {
+  const hostile = { prs: [{ id: 'p', repo: '</script><img src=x onerror=alert(1)> ', mergedAt: '2026-10-01T00:00:00Z', by: {} }], repos: [], you: 'me' }
+  const script = setStatsScript(hostile)
+  assert.ok(script.startsWith('window.shipwatchLive&&window.shipwatchLive.setStats('))
+  assert.ok(!script.includes('</script'))
+  assert.ok(!script.includes(' '))
+  // It is one expression that parses back to the same data.
+  const arg = script.slice(script.indexOf('setStats(') + 'setStats('.length, -1)
+  assert.deepEqual(JSON.parse(arg), hostile)
+  assert.equal(setStatusScript(null), 'window.shipwatchLive&&window.shipwatchLive.setStatus(null)')
+  assert.ok(setStatusScript({ state: 'loading', text: 'part 2 of 9', fraction: 0.1 }).includes('"fraction":0.1'))
+})
+
+test('the throttle passes the first value, drops those inside the gap, and passes the next after it', () => {
+  let now = 1000
+  const sent: number[] = []
+  const send = throttled<number>(2000, v => void sent.push(v), () => now)
+  send(1)
+  now += 500
+  send(2)
+  now += 1400
+  send(3)
+  assert.deepEqual(sent, [1])
+  now += 200
+  send(4)
+  assert.deepEqual(sent, [1, 4])
 })

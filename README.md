@@ -184,7 +184,9 @@ The last two run in CI too (`.github/workflows/checks.yml`).
   as you: every open Claude session running Shipwatch (each polls on its own), the `gh` CLI, the app. Shipwatch reads
   how much is left after each poll, stretches the wait as it runs down, and never spends the last 30% (kept for your
   other tools and `gh pr create`); the pane says so ("Polling every N s...", "Paused until ..."). If GitHub refuses
-  anyway it says when the allowance resets and waits for that. Each extra open session still costs its own polls.
+  anyway it says which limit it was and waits for it: GitHub also has a short-term limit on how fast requests arrive (it
+  refuses a burst even with allowance left), which clears in a minute or two, so the history load spaces its requests by
+  what each cost and retries a refused one after about 90 seconds; the hourly limit it waits out until the reset. Each extra open session still costs its own polls.
 
 ## Standards
 
@@ -215,8 +217,13 @@ npm start
 
 It uses the `gh` CLI you are signed in with, or `GITHUB_TOKEN`. Optional settings go in `config.json` in the app's
 user-data folder (`%APPDATA%/Shipwatch` on Windows): `owner`, `includeForks`, `maxRepos`, `staleDays`, `aiNames`,
-`ignore`. `SHIPWATCH_OWNER` overrides the owner. The first run loads your whole merged-PR history (back to your first
-repo), which takes a few minutes; later runs fetch only what is new.
+`ignore`. `SHIPWATCH_OWNER` overrides the owner.
+
+The dashboard appears as soon as your repos are read (seconds). The stats history loads afterwards, in the background,
+with a progress bar on the Stats tab, and the numbers fill in as it arrives. It is saved in `stats.json` in the same
+folder, newest first, as it loads, so closing the app or hitting a rate limit part way loses nothing, and the next run
+carries on from there. The first run reads your whole merged-PR history (back to your first repo), which takes a few
+minutes; after that only the days since are read, and Refresh does not repeat a load that finished in the last ten minutes.
 
 The report has a theme picker: the [VisualAssault](https://github.com/gerp93/VisualAssault) themes, vendored at a pinned
 tag into `src/core/themes.generated.ts` by `node scripts/update-visual-assault-css.mjs <tag>` (CI checks the file matches its tag).

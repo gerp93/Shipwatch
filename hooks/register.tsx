@@ -6,9 +6,9 @@ import type { Seen } from '../src/core/analyze'
 import { buildBoard } from '../src/core/boardService'
 import { barsSvg, chartColor, donutSvg, legendSvg, weeksSvg } from '../src/core/charts'
 import type { InfraVerdicts } from '../src/core/boardService'
-import { isRateLimit, pace, rateLimitMessage, throttleNote } from '../src/core/budget'
+import { adviseOnLimit, isRateLimit, pace, throttleNote } from '../src/core/budget'
 import type { Budget } from '../src/core/budget'
-import { connect, fetchGraphqlReset, resolveOwner } from '../src/core/github'
+import { connect, fetchGraphqlLimit, resolveOwner } from '../src/core/github'
 import { openArgv, renderReport } from '../src/core/report'
 import { headlineLink, safeHref, stepLinks } from '../src/core/links'
 import type { StepLinks } from '../src/core/links'
@@ -176,11 +176,12 @@ async function refresh($: any): Promise<number> {
     let message = err instanceof Error ? err.message : String(err)
     delay = ERROR_POLL_MS
     if (isRateLimit(message)) {
-      // Say when it resets and wait for that, instead of asking again every minute.
-      const resetAt = reached ? await fetchGraphqlReset(io, reached) : undefined
+      // Say which limit it was and wait for it: a burst limit clears in a minute or two, the hourly one at its reset.
+      const limit = reached ? await fetchGraphqlLimit(io, reached) : undefined
       const at: number = await $.clock.now()
-      message = rateLimitMessage(resetAt, at)
-      if (resetAt && resetAt > at) delay = Math.min(65 * 60_000, resetAt - at + 5_000)
+      const advice = adviseOnLimit(limit, at)
+      message = advice.message
+      delay = Math.min(65 * 60_000, Math.max(ERROR_POLL_MS, advice.retryInMs))
     }
     await update($, board, b => ({ ...b, isLoading: false, error: message, note: null }))
   } finally {

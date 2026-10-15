@@ -1,15 +1,17 @@
-// Gathers everything the report shows: the dashboard's repos and the stats history. This is the app's
-// counterpart of the Claude pane's refresh: it calls the same core functions, so both read GitHub the same way.
+// Gathers what the report shows, in two steps so the window need not wait for the slow one: the dashboard's repos
+// (a few seconds), then the stats history (the first run reads years of merged PRs). This is the app's counterpart
+// of the Claude pane's refresh: it calls the same core functions, so both read GitHub the same way.
 
 import { buildBoard } from '../../src/core/boardService'
 import type { InfraVerdicts } from '../../src/core/boardService'
-import { isRateLimit, rateLimitMessage } from '../../src/core/budget'
-import { connect, fetchGraphqlReset, resolveOwner } from '../../src/core/github'
+import { adviseOnLimit, isRateLimit } from '../../src/core/budget'
+import { connect, fetchGraphqlLimit, resolveOwner } from '../../src/core/github'
 import type { IO, Store } from '../../src/core/ports'
 import type { ReportData } from '../../src/core/report'
 import { ALL_TIME } from '../../src/core/stats'
 import { loadStatsCache, refreshStats } from '../../src/core/statsService'
-import type { StatsBoard } from '../../src/core/types'
+import type { Access } from '../../src/core/ports'
+import type { RepoView, StatsBoard } from '../../src/core/types'
 
 import type { AppConfig } from './config'
 
@@ -45,67 +47,96 @@ export type CollectDeps = {
   onProgress?: (text: string) => void
 }
 
+/** What the first step learned: who, and their repos as the dashboard shows them. */
+export type DashboardRead = { owner: string; repos: RepoView[]; access: Access }
+
+/** A rate-limit failure said plainly, which limit it was and when to try again; anything else as it was. */
+const explain = async (io: IO, access: Access, err: unknown): Promise<Error> => {
+  const message = err instanceof Error ? err.message : String(err)
+  if (isRateLimit(message)) return new Error(adviseOnLimit(await fetchGraphqlLimit(io, access), Date.now()).message)
+  return err instanceof Error ? err : new Error(message)
+}
+
+const sleep = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms))
+const DASHBOARD_TRIES = 4
+
 /**
- * Reads the dashboard, then brings the stats history up to date. A failure in the stats (a rate limit part
- * way through a first load, say) does not lose the dashboard: the report is built from what was read, and the
- * stats error is returned beside it for the caller to mention.
+ * Step one: the dashboard. Fast, and enough to show the window. A short-term burst limit (GitHub slowing
+ * requests while the hourly allowance still has points) is waited out a few times; anything else throws a
+ * message that says what happened.
  */
-export const collect = async (deps: CollectDeps): Promise<{ data: ReportData; statsError: string | null }> => {
-  const { io, store, config, now } = deps
+export const collectDashboard = async (deps: CollectDeps): Promise<DashboardRead> => {
+  const { io, config, now } = deps
   deps.onProgress?.('Connecting to GitHub...')
   const access = await connect(io, config.token)
-
-  let owner: string
-  let repos: Awaited<ReturnType<typeof buildBoard>>
-  try {
-    owner = await resolveOwner(io, access, config.owner)
-    deps.onProgress?.('Reading repos...')
-    repos = await buildBoard(
-      io,
-      access,
-      {
-        owner,
-        count: config.count,
-        includeForks: config.includeForks,
-        ignore: new Set(config.ignore.map(n => n.toLowerCase())),
-        staleMs: config.staleDays * DAY_MS,
-      },
-      now,
-      deps.infraVerdicts,
-    )
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err)
-    // Say when GitHub's shared hourly allowance comes back, rather than only that it ran out.
-    if (isRateLimit(message)) throw new Error(rateLimitMessage(await fetchGraphqlReset(io, access), Date.now()))
-    throw err
+  for (let attempt = 1; ; attempt++) {
+    try {
+      const owner = await resolveOwner(io, access, config.owner)
+      deps.onProgress?.('Reading repos...')
+      const repos = await buildBoard(
+        io,
+        access,
+        {
+          owner,
+          count: config.count,
+          includeForks: config.includeForks,
+          ignore: new Set(config.ignore.map(n => n.toLowerCase())),
+          staleMs: config.staleDays * DAY_MS,
+        },
+        now,
+        deps.infraVerdicts,
+      )
+      return { owner, repos, access }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      if (!isRateLimit(message)) throw err
+      const advice = adviseOnLimit(await fetchGraphqlLimit(io, access), Date.now())
+      if (!advice.burst || attempt >= DASHBOARD_TRIES) throw new Error(advice.message)
+      deps.onProgress?.(`GitHub is briefly slowing requests; trying again in ${Math.round(advice.retryInMs / 1000)} s (try ${attempt} of ${DASHBOARD_TRIES - 1})...`)
+      await sleep(advice.retryInMs)
+    }
   }
+}
 
-  let stats: StatsBoard = { ...EMPTY_STATS }
-  const saved = await loadStatsCache(store, owner, config.aiNames)
-  if (saved) stats = { ...stats, ...saved }
-  let statsError: string | null = null
+/** The stats history kept from earlier runs: instant, and what the report shows while the rest loads. */
+export const savedStats = async (deps: CollectDeps, owner: string): Promise<StatsBoard> => {
+  const saved = await loadStatsCache(deps.store, owner, deps.config.aiNames)
+  return saved ? { ...EMPTY_STATS, ...saved } : { ...EMPTY_STATS }
+}
+
+/**
+ * Step two: brings the stats history up to date, reading only what is not already held, and hands the history
+ * so far to `onPartial` as each stretch arrives. A failure (a rate limit part way through a first load) does not
+ * lose what was read: it is kept, and the error comes back beside the stats for the caller to show.
+ */
+export const collectStats = async (
+  deps: CollectDeps,
+  read: DashboardRead,
+  start: StatsBoard,
+  onPartial?: (stats: ReportData['stats']) => void,
+): Promise<{ stats: StatsBoard; error: string | null }> => {
+  const { io, store, config, now } = deps
+  let stats = start
   try {
     const done = await refreshStats(
       {
         io,
-        access,
+        access: read.access,
         store,
-        owner,
+        owner: read.owner,
         aiNames: config.aiNames,
         now,
         onProgress: text => deps.onProgress?.(text),
         wait: ms => new Promise(resolve => setTimeout(resolve, ms)),
-        onPartial: (prs, you) => void (stats = { ...stats, prs, you }),
+        onPartial: (prs, you, repos) => {
+          stats = { ...stats, prs, you, repos }
+          onPartial?.({ prs, you, repos })
+        },
       },
       stats,
     )
-    stats = { ...stats, ...done }
+    return { stats: { ...stats, ...done }, error: null }
   } catch (err) {
-    statsError = err instanceof Error ? err.message : String(err)
-  }
-
-  return {
-    data: { generatedAt: now, board: { owner, repos }, stats: { prs: stats.prs, repos: stats.repos, you: stats.you } },
-    statsError,
+    return { stats, error: (await explain(io, read.access, err)).message }
   }
 }

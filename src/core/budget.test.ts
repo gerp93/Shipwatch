@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { RESERVE_FRACTION, isRateLimit, pace, rateLimitMessage, throttleNote } from './budget'
+import { BURST_PAUSE_MS, RESERVE_FRACTION, adviseOnLimit, isBurstLimit, isRateLimit, pace, rateLimitMessage, reserveMessage, throttleNote } from './budget'
 import type { Budget } from './budget'
 
 const NOW = Date.parse('2026-10-15T12:00:00Z')
@@ -58,4 +58,36 @@ test('the messages say what happened and when it clears', () => {
   expect(throttleNote(b, pace(b, NOW, 20_000), at)).toContain('2,000 of 5,000 left')
   const spent = budget({ remaining: 1_000 })
   expect(throttleNote(spent, pace(spent, NOW, 20_000), at)).toContain('Paused until T+60m')
+})
+
+test('a refusal with allowance left is a burst limit, and one with none left is the hourly limit', () => {
+  const at = (ms: number) => `T+${Math.round((ms - NOW) / 60_000)}m`
+  expect(isBurstLimit({ remaining: 4_835, resetAt: NOW + HOUR })).toBe(true)
+  expect(isBurstLimit({ remaining: 0, resetAt: NOW + HOUR })).toBe(false)
+  expect(isBurstLimit({ remaining: undefined, resetAt: NOW + HOUR })).toBe(false)
+  expect(isBurstLimit(undefined)).toBe(false)
+
+  const burst = adviseOnLimit({ remaining: 4_835, resetAt: NOW + HOUR }, NOW, at)
+  expect(burst.burst).toBe(true)
+  expect(burst.retryInMs).toBe(BURST_PAUSE_MS)
+  expect(burst.message).toContain('briefly slowing')
+  expect(burst.message).toContain('4,835 points are still left')
+  expect(burst.message).not.toContain('used up') // it must not claim the hourly allowance is spent
+
+  const hourly = adviseOnLimit({ remaining: 0, resetAt: NOW + 8 * 60_000 }, NOW, at)
+  expect(hourly.burst).toBe(false)
+  expect(hourly.retryInMs).toBe(8 * 60_000 + 5_000)
+  expect(hourly.message).toContain('used up')
+  expect(hourly.message).toContain('resets at T+8m')
+
+  // Not able to ask: say the hourly thing is unknown and retry in a minute.
+  const unknown = adviseOnLimit(undefined, NOW, at)
+  expect(unknown.burst).toBe(false)
+  expect(unknown.retryInMs).toBe(60_000)
+})
+
+test('stopping to leave the reserve says why and when to come back', () => {
+  const at = (ms: number) => `T+${Math.round((ms - NOW) / 60_000)}m`
+  expect(reserveMessage(NOW + 30 * 60_000, NOW, at)).toContain('resets at T+30m')
+  expect(reserveMessage(NOW - 1, NOW, at)).toContain('Choose Refresh')
 })

@@ -293,7 +293,7 @@ test('a load that hits the hourly limit waits for the reset when it is soon, and
   }
   expect(waits.length).toBeGreaterThan(0)
   expect(waits[0]! > 3 * 60_000 - 5_000 && waits[0]! < 3 * 60_000 + 10_000).toBe(true)
-  expect(soonFailure).toContain('rate limit')
+  expect(soonFailure).toContain('used up') // it gave up after a few waits, and says why
 
   // Far off (an hour): no waiting; it stops and says when the allowance returns.
   const far: number[] = []
@@ -309,4 +309,60 @@ test('a load that hits the hourly limit waits for the reset when it is soon, and
   expect(far).toEqual([])
   expect(farFailure).toContain('used up')
   expect(farFailure).toContain('resets at')
+})
+
+const quiet = (extra: (ask: Ask) => unknown | undefined) => (ask: Ask): unknown => {
+  if (ask.text.includes('viewer')) return { data: { viewer: { login: 'me' } } }
+  if (ask.text.includes('CREATED_AT')) return { data: { repositoryOwner: { repositories: { pageInfo: { hasNextPage: false }, nodes: [] } } } }
+  return extra(ask) ?? search([])
+}
+const withBudget = (r: unknown, budget: unknown): unknown => ({ data: { ...(r as { data: object }).data, rateLimit: budget } })
+
+test('a burst limit while hourly allowance is left is waited out in about a minute and a half, then the load goes on', async () => {
+  let refused = false
+  const gh = fakeGitHub(
+    quiet(ask => {
+      if (ask.kind === 'rest' && ask.text === 'rate_limit') return { resources: { graphql: { remaining: 4_200, reset: Math.floor(Date.now() / 1000) + 3_000 } } }
+      if (ask.vars.q && !refused) {
+        refused = true
+        throw new Error('gh: API rate limit already exceeded for user ID 1.')
+      }
+      return undefined
+    }),
+  )
+  const waits: number[] = []
+  const said: string[] = []
+  const done = await refreshStats(
+    { io: gh.io, access: ACCESS, store: memoryStore(), owner: 'me', aiNames: [], now: NOW, wait: async ms => void waits.push(ms), onProgress: t => said.push(t) },
+    emptyStats({ range: 90 }),
+  )
+  expect(waits).toEqual([90_000])
+  expect(said.some(t => t.includes('briefly slowing'))).toBe(true)
+  expect(done.coveredFrom).toBe('2026-07-11')
+})
+
+test('the history load spaces its requests by what each cost, so a long load does not trip the burst limit', async () => {
+  const gh = fakeGitHub(quiet(ask => (ask.vars.q ? withBudget(search([]), { cost: 40, remaining: 4_000, limit: 5_000, resetAt: '2026-10-09T13:00:00Z' }) : undefined)))
+  const waits: number[] = []
+  await refreshStats({ io: gh.io, access: ACCESS, store: memoryStore(), owner: 'me', aiNames: [], now: NOW, wait: async ms => void waits.push(ms) }, emptyStats({ range: 90 }))
+  expect(waits).toEqual([2_000, 2_000, 2_000]) // 40 points at 50 ms each, between the four windows
+})
+
+test('the load stops to leave the reserve alone, waiting for a reset that is soon and giving up on one that is far', async () => {
+  const answer = (resetInMs: number) =>
+    quiet(ask => (ask.vars.q ? withBudget(search([]), { cost: 40, remaining: 1_400, limit: 5_000, resetAt: new Date(Date.now() + resetInMs).toISOString() }) : undefined))
+  // Far: stops, and says when to come back.
+  let failure = ''
+  try {
+    await refreshStats({ io: fakeGitHub(answer(60 * 60_000)).io, access: ACCESS, store: memoryStore(), owner: 'me', aiNames: [], now: NOW, wait: async () => {} }, emptyStats({ range: 90 }))
+  } catch (err) {
+    failure = String(err)
+  }
+  expect(failure).toContain('keep part of GitHub')
+  expect(failure).toContain('resets at')
+  // Soon: waits for it (after the usual gap), then goes on.
+  const waits: number[] = []
+  await refreshStats({ io: fakeGitHub(answer(3 * 60_000)).io, access: ACCESS, store: memoryStore(), owner: 'me', aiNames: [], now: NOW, wait: async ms => void waits.push(ms) }, emptyStats({ range: 90 }))
+  expect(waits[0]).toBe(2_000)
+  expect(waits[1]! > 3 * 60_000 && waits[1]! < 3 * 60_000 + 10_000).toBe(true)
 })

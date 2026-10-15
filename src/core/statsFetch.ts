@@ -1,3 +1,4 @@
+import type { Budget } from './budget'
 import type { RepoCreated } from './types'
 import { graphql } from './github'
 import type { Access, IO } from './ports'
@@ -8,6 +9,7 @@ import type { RawMergedPr } from './stats'
 // keeps each answer small: every PR carries up to 100 commits.
 const MERGED_QUERY = `
 query($q:String!,$after:String){
+  rateLimit{ cost remaining limit resetAt }
   search(query:$q, type:ISSUE, first:25, after:$after){
     issueCount
     pageInfo{ hasNextPage endCursor }
@@ -59,6 +61,8 @@ export const fetchMergedPrs = async (
   from: string,
   to: string | null,
   onPage?: (loaded: number, total: number) => void,
+  /** Told what each page cost and what GitHub's allowance has left, so the caller can pace itself (budget.ts). */
+  onBudget?: (budget: Budget) => void,
 ): Promise<RawMergedPr[]> => {
   const query = `user:${owner} is:pr is:merged merged:${from}..${to ?? '*'}`
   const found: RawMergedPr[] = []
@@ -66,6 +70,10 @@ export const fetchMergedPrs = async (
   for (let page = 0; page < 60; page++) {
     const vars: Record<string, string | number | boolean | null> = { q: query, after }
     const out = await graphql(io, access, MERGED_QUERY, vars)
+    const rl = out?.data?.rateLimit
+    if (rl && typeof rl.remaining === 'number' && typeof rl.limit === 'number') {
+      onBudget?.({ cost: Number(rl.cost) || 1, remaining: rl.remaining, limit: rl.limit, resetAt: Date.parse(rl.resetAt) || 0 })
+    }
     const search = out?.data?.search
     if (!search) throw new Error(out?.errors?.[0]?.message ?? 'GitHub search failed')
     for (const node of search.nodes ?? []) if (node?.id && node.mergedAt) found.push(node as RawMergedPr)
