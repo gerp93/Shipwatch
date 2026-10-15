@@ -7,8 +7,9 @@ import { buildBoard } from '../src/core/boardService'
 import { barsSvg, chartColor, donutSvg, legendSvg, weeksSvg } from '../src/core/charts'
 import type { InfraVerdicts } from '../src/core/boardService'
 import { adviseOnLimit, isRateLimit, pace, throttleNote } from '../src/core/budget'
-import type { Budget } from '../src/core/budget'
-import { connect, fetchGraphqlLimit, resolveOwner } from '../src/core/github'
+import type { ApiLimits, Budget } from '../src/core/budget'
+import { connect, fetchApiLimits, resolveOwner } from '../src/core/github'
+import { fetchRecentPrs } from '../src/core/recent'
 import { openArgv, renderReport } from '../src/core/report'
 import { headlineLink, safeHref, stepLinks } from '../src/core/links'
 import type { StepLinks } from '../src/core/links'
@@ -31,7 +32,7 @@ import {
   reposCreatedSince,
 } from '../src/core/stats'
 import { loadStatsCache, refreshStats, statsAreFresh } from '../src/core/statsService'
-import type { Board, Checks, Level, PrView, RepoView, StatsBoard, StatsMode, StepState } from '../src/core/types'
+import type { Board, Checks, Level, PrView, RecentPr, RepoView, StatsBoard, StatsMode, StepState } from '../src/core/types'
 import type { ViewName } from '../types'
 
 const PANE = 'shipwatch'
@@ -40,7 +41,7 @@ const ACTIVE_POLL_MS = 20_000
 const ERROR_POLL_MS = 60_000
 const MAX_PRS_SHOWN = 3
 
-const INITIAL: Board = { owner: '', repos: [], updatedAt: 0, isLoading: false, error: null, note: null, source: null }
+const INITIAL: Board = { owner: '', repos: [], updatedAt: 0, isLoading: false, error: null, note: null, points: null, source: null }
 const board = atom({ plugin: 'shipwatch', key: 'board' } as const, INITIAL)
 const showStale = atom({ plugin: 'shipwatch', key: 'showStale' } as const, false)
 const view = atom({ plugin: 'shipwatch', key: 'view' } as const, 'dashboard' as ViewName)
@@ -168,7 +169,8 @@ async function refresh($: any): Promise<number> {
     const paced = pace(budget, now, wanted)
     delay = paced.delayMs
     const note = budget && (paced.paused || paced.delayMs > wanted) ? throttleNote(budget, paced) : null
-    await update($, board, () => ({ owner: resolvedOwner, repos, updatedAt: now, isLoading: false, error: null, note, source }))
+    const points = budget ? { remaining: budget.remaining, limit: budget.limit, resetAt: budget.resetAt } : null
+    await update($, board, b => ({ owner: resolvedOwner, repos, updatedAt: now, isLoading: false, error: null, note, points: points ?? b.points, source }))
   } catch (err) {
     const reached = access
     access = undefined
@@ -177,7 +179,7 @@ async function refresh($: any): Promise<number> {
     delay = ERROR_POLL_MS
     if (isRateLimit(message)) {
       // Say which limit it was and wait for it: a burst limit clears in a minute or two, the hourly one at its reset.
-      const limit = reached ? await fetchGraphqlLimit(io, reached) : undefined
+      const limit = reached ? (await fetchApiLimits(io, reached))?.graphql : undefined
       const at: number = await $.clock.now()
       const advice = adviseOnLimit(limit, at)
       message = advice.message
@@ -261,10 +263,25 @@ async function openReport($: any): Promise<void> {
     const b = await read($, board)
     const s = await read($, stats)
     const generatedAt: number = await $.clock.now()
+    // The last hour's PRs (for the clock's rim) and what is left of GitHub's allowance are extras: a failure to read
+    // them leaves the report without them rather than without a report.
+    let recentPrs: RecentPr[] | undefined
+    let api: ApiLimits | undefined
+    if (b.owner && access) {
+      const io: IO = { run: (argv, init) => $.process.run(argv, init), fetch: (url, init) => $.http.fetch(url, init) }
+      try {
+        recentPrs = await fetchRecentPrs(io, access, b.owner, generatedAt - 3_600_000)
+      } catch {
+        // No clock rim in this report.
+      }
+      api = await fetchApiLimits(io, access)
+    }
     const html = renderReport({
       generatedAt,
       board: { owner: b.owner, repos: b.repos },
       stats: { prs: s.prs, repos: s.repos, you: s.you },
+      recentPrs,
+      api,
     })
     const dir = (await $.env.get('TEMP')) || (await $.env.get('TMPDIR')) || '/tmp'
     const path = `${String(dir).replace(/[\\/]+$/, '')}/shipwatch-report.html`
@@ -697,6 +714,7 @@ export const register: Register = (on, options) => {
           <Text dimColor>
             {b.updatedAt ? `updated ${since(new Date(b.updatedAt).toISOString())}` : 'loading…'}
             {b.source ? ` · via ${b.source}` : ''}
+            {b.points ? ` · API ${b.points.remaining.toLocaleString('en-US')}/${b.points.limit.toLocaleString('en-US')}` : ''}
             {cfg.autoFix ? ' · auto-fix on' : ''}
           </Text>
           <Button key="refresh" hotkey="r" label={refreshLabel} onPress={() => void refresh($).then(d => loop($, d))} />

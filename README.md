@@ -25,7 +25,8 @@ release. With several apps going at once it answers "which of these is waiting o
 - **Toasts** when a build passes or fails, and when a new release is published.
 - **Auto-fix (opt-in)**: a broken default-branch build can wake an idle session with a
   fix request, so a failure after an auto-merge doesn't wait for you to notice.
-- **A ship clock** on the report and in the standalone app: an analog clock driven by the board. The hour hand points at the repo that most needs you, the minute hand shows how far it is from PR to release, and the second hand is red while a build is failing.
+- **A ship clock** on the report and in the standalone app: a real analog clock (the hands show the time) whose rim shows the last hour of work. A dot sits at the minute each PR was opened, for the last 60 minutes, coloured by where it stands now (merged, open with checks passing / running / failing, draft, closed), with a list beside it and a one-line count ("7 PRs opened in the last hour: 4 merged, 2 open (1 failing), 1 closed"). A dot drops off when its hour is up. The app re-reads the hour every minute.
+- **A GitHub points readout** in the report's header: how many of GitHub's GraphQL points are left this hour (and how many were used since the page opened), turning amber under 30% and red under 10%. The app reads it every 30 seconds from the endpoint GitHub does not count.
 - **Adaptive polling**: every 20 s while something builds, every 60 s otherwise.
   Press `r` in the pane to refresh now.
 
@@ -184,9 +185,8 @@ The last two run in CI too (`.github/workflows/checks.yml`).
   as you: every open Claude session running Shipwatch (each polls on its own), the `gh` CLI, the app. Shipwatch reads
   how much is left after each poll, stretches the wait as it runs down, and never spends the last 30% (kept for your
   other tools and `gh pr create`); the pane says so ("Polling every N s...", "Paused until ..."). If GitHub refuses
-  anyway it says which limit it was and waits for it: GitHub also has a short-term limit on how fast requests arrive (it
-  refuses a burst even with allowance left), which clears in a minute or two, so the history load spaces its requests by
-  what each cost and retries a refused one after about 90 seconds; the hourly limit it waits out until the reset. Each extra open session still costs its own polls.
+  anyway the message says what GitHub's own rate-limit status shows (points left and the reset time), and Shipwatch tries again at that
+  reset time; it makes up no time of its own. Each extra open session still costs its own polls.
 
 ## Standards
 
@@ -219,11 +219,18 @@ It uses the `gh` CLI you are signed in with, or `GITHUB_TOKEN`. Optional setting
 user-data folder (`%APPDATA%/Shipwatch` on Windows): `owner`, `includeForks`, `maxRepos`, `staleDays`, `aiNames`,
 `ignore`. `SHIPWATCH_OWNER` overrides the owner.
 
-The dashboard appears as soon as your repos are read (seconds). The stats history loads afterwards, in the background,
-with a progress bar on the Stats tab, and the numbers fill in as it arrives. It is saved in `stats.json` in the same
-folder, newest first, as it loads, so closing the app or hitting a rate limit part way loses nothing, and the next run
-carries on from there. The first run reads your whole merged-PR history (back to your first repo), which takes a few
-minutes; after that only the days since are read, and Refresh does not repeat a load that finished in the last ten minutes.
+**It opens on what it already knows.** The last dashboard it read is saved (`board.json` in the same folder), and the stats
+history is saved too (`stats.json`), so the window shows both straight away on every start after the first. GitHub is
+read behind it: a banner says the repos shown are saved ones being updated (or why the update failed and when it will try
+again), and the page changes when the new data arrives, keeping your tab, filters and sort. Only the very first start,
+when nothing is saved, shows a loading screen. After that the app also re-reads the dashboard by itself every couple of
+minutes (slower as GitHub's allowance runs down) and Refresh never replaces the page with a loader.
+
+The stats history loads in the background too, with a progress bar on the Stats tab and the numbers filling in as it
+arrives. It is saved newest first as it loads, so closing the app or hitting a rate limit part way loses nothing, and the
+next run carries on from there. The first run reads your whole merged-PR history (back to your first repo), which takes a
+few minutes; after that only the days since are read, and Refresh does not repeat a load that finished in the last ten
+minutes.
 
 The report has a theme picker: the [VisualAssault](https://github.com/gerp93/VisualAssault) themes, vendored at a pinned
 tag into `src/core/themes.generated.ts` by `node scripts/update-visual-assault-css.mjs <tag>` (CI checks the file matches its tag).

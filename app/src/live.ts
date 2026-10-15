@@ -1,14 +1,31 @@
-// Helpers for filling the report in after it is on screen: the dashboard is shown first, then the stats history
-// is handed to the page as it arrives. Plain strings and a throttle, so they can be tested without Electron.
+// Helpers for filling the report in after it is on screen: the app opens on what it already knows and updates behind
+// it, handing the page each part as it arrives. Plain strings and a throttle, so they can be tested without Electron.
 
+import type { ApiLimits } from '../../src/core/budget'
 import { jsonForScript } from '../../src/core/report'
-import type { ReportData, StatsStatus } from '../../src/core/report'
+import type { BoardStatus, ReportData, StatsStatus } from '../../src/core/report'
+import type { RecentPr } from '../../src/core/types'
 
-/** Script that gives the page the history so far. The data is written as a literal that cannot end the script early. */
-export const setStatsScript = (stats: ReportData['stats']): string => `window.shipwatchLive&&window.shipwatchLive.setStats(${jsonForScript(stats)})`
+/** A call into the page's `shipwatchLive`. The arguments are written as literals that cannot end the script early. */
+const call = (method: string, ...args: unknown[]): string => `window.shipwatchLive&&window.shipwatchLive.${method}(${args.map(a => jsonForScript(a)).join(',')})`
 
-/** Script that tells the page how loading is going; `null` says it is finished. */
-export const setStatusScript = (status: StatsStatus | null): string => `window.shipwatchLive&&window.shipwatchLive.setStatus(${jsonForScript(status)})`
+/** The stats history so far. */
+export const setStatsScript = (stats: ReportData['stats']): string => call('setStats', stats)
+
+/** How loading the stats is going; `null` says it is finished. */
+export const setStatusScript = (status: StatsStatus | null): string => call('setStatus', status)
+
+/** A freshly read dashboard (and the last hour's PRs when known), replacing the saved one on screen. */
+export const setBoardScript = (board: ReportData['board'], generatedAt: number, recent: RecentPr[] | undefined): string => call('setBoard', board, generatedAt, recent ?? null)
+
+/** How updating the dashboard is going; `null` says the dashboard on screen is current. */
+export const setBoardStatusScript = (status: BoardStatus | null): string => call('setBoardStatus', status)
+
+/** The PRs opened in the last hour, for the clock's rim. */
+export const setRecentScript = (recent: RecentPr[]): string => call('setRecent', recent)
+
+/** What is left of GitHub's allowances, for the readout in the header. */
+export const setApiScript = (api: ApiLimits): string => call('setApi', api)
 
 /** Passes a value on at most once every `ms`, dropping the ones between (the next call after the gap sends the latest). */
 export const throttled = <T>(ms: number, send: (value: T) => void, clock: () => number = Date.now): ((value: T) => void) => {

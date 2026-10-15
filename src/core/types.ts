@@ -9,6 +9,24 @@ export type StepState = 'done' | 'running' | 'failed' | 'todo'
 /** How much attention a repo needs, most urgent first. */
 export type Level = 'fail' | 'running' | 'ready' | 'pending' | 'draft' | 'idle'
 
+/**
+ * A PR opened recently and where it stands now, open, merged or closed: what the ship clock puts on its dial.
+ * Unlike `PrView` (open PRs only) this includes the ones already merged or closed.
+ */
+export type RecentPr = {
+  repo: string
+  number: number
+  title: string
+  url: string
+  /** When it was opened, ISO. */
+  createdAt: string
+  state: 'open' | 'merged' | 'closed'
+  isDraft: boolean
+  /** The checks on its latest commit; meaningful while it is open. */
+  checks: Checks
+  mergedAt: string | null
+}
+
 export type PrView = {
   number: number
   title: string
@@ -54,6 +72,8 @@ export type Board = {
   error: string | null
   /** How the dashboard is being paced when it is slowed or paused for GitHub's allowance; null when it is not. */
   note: string | null
+  /** GraphQL points GitHub reported left after the last read, for the header; null before the first read. */
+  points: { remaining: number; limit: number; resetAt: number } | null
   /** How the last refresh reached GitHub. */
   source: 'gh' | 'token' | null
 }

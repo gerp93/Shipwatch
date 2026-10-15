@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { BURST_PAUSE_MS, RESERVE_FRACTION, adviseOnLimit, isBurstLimit, isRateLimit, pace, rateLimitMessage, reserveMessage, throttleNote } from './budget'
+import { RESERVE_FRACTION, adviseOnLimit, isRateLimit, limitTone, pace, reserveMessage, throttleNote } from './budget'
 import type { Budget } from './budget'
 
 const NOW = Date.parse('2026-10-15T12:00:00Z')
@@ -45,14 +45,8 @@ test('rate-limit wording from GitHub is recognised, and an ordinary failure is n
   expect(isRateLimit('Could not find o/app#7')).toBe(false)
 })
 
-test('the messages say what happened and when it clears', () => {
+test('the throttle note says what the pacing is doing and why', () => {
   const at = (ms: number) => `T+${Math.round((ms - NOW) / 60_000)}m`
-  const known = rateLimitMessage(NOW + 8 * 60_000, NOW, at)
-  expect(known).toContain('used up')
-  expect(known).toContain('shared by everything signed in as you')
-  expect(known).toContain('resets at T+8m')
-  expect(rateLimitMessage(undefined, NOW, at)).toContain('try again shortly')
-  expect(rateLimitMessage(NOW - 1, NOW, at)).toContain('try again shortly') // a reset time already past is no help
   const b = budget({ remaining: 2_000 })
   expect(throttleNote(b, pace(b, NOW, 20_000), at)).toContain('Polling every 72 s')
   expect(throttleNote(b, pace(b, NOW, 20_000), at)).toContain('2,000 of 5,000 left')
@@ -60,30 +54,41 @@ test('the messages say what happened and when it clears', () => {
   expect(throttleNote(spent, pace(spent, NOW, 20_000), at)).toContain('Paused until T+60m')
 })
 
-test('a refusal with allowance left is a burst limit, and one with none left is the hourly limit', () => {
+test('a refusal is explained with what GitHub reports, and retried at the reset time it gives', () => {
   const at = (ms: number) => `T+${Math.round((ms - NOW) / 60_000)}m`
-  expect(isBurstLimit({ remaining: 4_835, resetAt: NOW + HOUR })).toBe(true)
-  expect(isBurstLimit({ remaining: 0, resetAt: NOW + HOUR })).toBe(false)
-  expect(isBurstLimit({ remaining: undefined, resetAt: NOW + HOUR })).toBe(false)
-  expect(isBurstLimit(undefined)).toBe(false)
 
-  const burst = adviseOnLimit({ remaining: 4_835, resetAt: NOW + HOUR }, NOW, at)
-  expect(burst.burst).toBe(true)
-  expect(burst.retryInMs).toBe(BURST_PAUSE_MS)
-  expect(burst.message).toContain('briefly slowing')
-  expect(burst.message).toContain('4,835 points are still left')
-  expect(burst.message).not.toContain('used up') // it must not claim the hourly allowance is spent
+  // Refused with points left: the same thing as any other refusal. It waits for the reset GitHub reports.
+  const refused = adviseOnLimit({ remaining: 4_835, limit: 5_000, resetAt: NOW + HOUR }, NOW, at)
+  expect(refused.retryInMs).toBe(HOUR + 5_000)
+  expect(refused.message).toContain('GitHub refused the request with a rate-limit error')
+  expect(refused.message).toContain('shows 4,835 of 5,000 points left and a reset at T+60m; Shipwatch will try again then')
+  // Nothing Shipwatch made up: no invented kind of limit, no delay of its own.
+  for (const guess of ['burst', 'briefly', 'short-term', 'usually', 'does not say', '90 s']) expect(refused.message).not.toContain(guess)
+  expect(refused.giveUp).toContain('Choose Refresh after that')
+  expect(refused.giveUp).not.toContain('will try again')
 
-  const hourly = adviseOnLimit({ remaining: 0, resetAt: NOW + 8 * 60_000 }, NOW, at)
-  expect(hourly.burst).toBe(false)
-  expect(hourly.retryInMs).toBe(8 * 60_000 + 5_000)
-  expect(hourly.message).toContain('used up')
-  expect(hourly.message).toContain('resets at T+8m')
+  // Allowance spent: the same, with nothing left.
+  const spent = adviseOnLimit({ remaining: 0, limit: 5_000, resetAt: NOW + 8 * 60_000 }, NOW, at)
+  expect(spent.retryInMs).toBe(8 * 60_000 + 5_000)
+  expect(spent.message).toContain('0 of 5,000 points left and a reset at T+8m')
 
-  // Not able to ask: say the hourly thing is unknown and retry in a minute.
+  // A reset time already past is no help: ask again in a minute, and say that.
+  const passed = adviseOnLimit({ remaining: 0, limit: 5_000, resetAt: NOW - 1 }, NOW, at)
+  expect(passed.retryInMs).toBe(60_000)
+  expect(passed.message).toContain('has passed')
+
+  // Could not read GitHub's status at all: say that, and invent nothing.
   const unknown = adviseOnLimit(undefined, NOW, at)
-  expect(unknown.burst).toBe(false)
   expect(unknown.retryInMs).toBe(60_000)
+  expect(unknown.message).toContain("could not read GitHub's rate-limit status")
+  expect(unknown.message).not.toContain('points left')
+})
+
+test('the readout is calm above 30%, low under it and urgent under 10%', () => {
+  expect(limitTone({ remaining: 4_000, limit: 5_000, resetAt: NOW })).toBe('ok')
+  expect(limitTone({ remaining: 1_400, limit: 5_000, resetAt: NOW })).toBe('low')
+  expect(limitTone({ remaining: 400, limit: 5_000, resetAt: NOW })).toBe('critical')
+  expect(limitTone({ remaining: 0, limit: 0, resetAt: NOW })).toBe('ok')
 })
 
 test('stopping to leave the reserve says why and when to come back', () => {

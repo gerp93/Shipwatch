@@ -257,7 +257,7 @@ test('a long load keeps what it has fetched, newest first, when GitHub stops it 
 
 test('the board read reports what is left of GitHub\'s allowance, and the reset time is asked of the free endpoint', async () => {
   const gh = fakeGitHub(ask => {
-    if (ask.kind === 'rest' && ask.text === 'rate_limit') return { resources: { graphql: { reset: 1_792_100_964 } } }
+    if (ask.kind === 'rest' && ask.text === 'rate_limit') return { resources: { graphql: { remaining: 4_321, limit: 5_000, reset: 1_792_100_964 } } }
     return {
       data: {
         rateLimit: { cost: 9, remaining: 4_321, limit: 5_000, resetAt: '2026-10-15T21:49:24Z' },
@@ -274,7 +274,7 @@ test('the board read reports what is left of GitHub\'s allowance, and the reset 
 
 test('a load that hits the hourly limit waits for the reset when it is soon, and stops with an explanation when it is not', async () => {
   const limited = (resetInMs: number) => (ask: Ask): unknown => {
-    if (ask.kind === 'rest' && ask.text === 'rate_limit') return { resources: { graphql: { reset: Math.floor((Date.now() + resetInMs) / 1000) } } }
+    if (ask.kind === 'rest' && ask.text === 'rate_limit') return { resources: { graphql: { remaining: 0, limit: 5_000, reset: Math.floor((Date.now() + resetInMs) / 1000) } } }
     if (ask.text.includes('viewer')) return { data: { viewer: { login: 'me' } } }
     if (ask.text.includes('CREATED_AT')) return { data: { repositoryOwner: { repositories: { pageInfo: { hasNextPage: false }, nodes: [] } } } }
     if (ask.vars.q) throw new Error('gh: API rate limit already exceeded for user ID 1.')
@@ -293,7 +293,9 @@ test('a load that hits the hourly limit waits for the reset when it is soon, and
   }
   expect(waits.length).toBeGreaterThan(0)
   expect(waits[0]! > 3 * 60_000 - 5_000 && waits[0]! < 3 * 60_000 + 10_000).toBe(true)
-  expect(soonFailure).toContain('used up') // it gave up after a few waits, and says why
+  expect(soonFailure).toContain('rate-limit error') // it gave up after a few waits, and says what GitHub reports
+  expect(soonFailure).toContain('0 of 5,000 points left and a reset at')
+  expect(soonFailure).toContain('Choose Refresh')
 
   // Far off (an hour): no waiting; it stops and says when the allowance returns.
   const far: number[] = []
@@ -307,8 +309,8 @@ test('a load that hits the hourly limit waits for the reset when it is soon, and
     farFailure = String(err)
   }
   expect(far).toEqual([])
-  expect(farFailure).toContain('used up')
-  expect(farFailure).toContain('resets at')
+  expect(farFailure).toContain('rate-limit error')
+  expect(farFailure).toContain('a reset at')
 })
 
 const quiet = (extra: (ask: Ask) => unknown | undefined) => (ask: Ask): unknown => {
@@ -318,11 +320,11 @@ const quiet = (extra: (ask: Ask) => unknown | undefined) => (ask: Ask): unknown 
 }
 const withBudget = (r: unknown, budget: unknown): unknown => ({ data: { ...(r as { data: object }).data, rateLimit: budget } })
 
-test('a burst limit while hourly allowance is left is waited out in about a minute and a half, then the load goes on', async () => {
+test('a refusal is waited out until the reset time GitHub reports, even with points left, and then the load goes on', async () => {
   let refused = false
   const gh = fakeGitHub(
     quiet(ask => {
-      if (ask.kind === 'rest' && ask.text === 'rate_limit') return { resources: { graphql: { remaining: 4_200, reset: Math.floor(Date.now() / 1000) + 3_000 } } }
+      if (ask.kind === 'rest' && ask.text === 'rate_limit') return { resources: { graphql: { remaining: 4_200, limit: 5_000, reset: Math.floor(Date.now() / 1000) + 180 } } }
       if (ask.vars.q && !refused) {
         refused = true
         throw new Error('gh: API rate limit already exceeded for user ID 1.')
@@ -336,8 +338,10 @@ test('a burst limit while hourly allowance is left is waited out in about a minu
     { io: gh.io, access: ACCESS, store: memoryStore(), owner: 'me', aiNames: [], now: NOW, wait: async ms => void waits.push(ms), onProgress: t => said.push(t) },
     emptyStats({ range: 90 }),
   )
-  expect(waits).toEqual([90_000])
-  expect(said.some(t => t.includes('briefly slowing'))).toBe(true)
+  expect(waits.length).toBe(1)
+  expect(waits[0]! > 180_000 - 2_000 && waits[0]! < 180_000 + 10_000).toBe(true) // until the reset it reported, not a time of its own
+  expect(said.some(t => t.includes('4,200 of 5,000 points left') && t.includes('Shipwatch will try again then'))).toBe(true)
+  for (const guess of ['briefly', 'burst', '90 s']) expect(said.some(t => t.includes(guess))).toBe(false)
   expect(done.coveredFrom).toBe('2026-07-11')
 })
 

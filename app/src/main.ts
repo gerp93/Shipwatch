@@ -9,15 +9,19 @@ import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
 import type { InfraVerdicts } from '../../src/core/boardService'
+import { pace } from '../../src/core/budget'
+import type { ApiLimits } from '../../src/core/budget'
+import { fetchApiLimits } from '../../src/core/github'
+import { fetchRecentPrs } from '../../src/core/recent'
 import { renderReport } from '../../src/core/report'
-import type { ReportData, StatsStatus } from '../../src/core/report'
+import type { BoardStatus, ReportData, StatsStatus } from '../../src/core/report'
 import { STATS_FRESH_MS } from '../../src/core/statsService'
 
 import { FileStore, nodeIO } from './adapters'
-import { collectDashboard, collectStats, savedStats } from './collect'
+import { HOUR_MS, RateLimited, collectDashboard, collectStats, loadSavedDashboard, saveDashboard, savedStats } from './collect'
 import type { CollectDeps, DashboardRead } from './collect'
 import { readConfig } from './config'
-import { setStatsScript, setStatusScript, throttled } from './live'
+import { setApiScript, setBoardScript, setBoardStatusScript, setRecentScript, setStatsScript, setStatusScript, throttled } from './live'
 import { mergeFromReport } from './merge'
 import { errorPage, isSafeExternalUrl, loadingPage, progressFraction } from './pages'
 import { checkForUpdatesNow, setupAutoUpdater } from './updates'
@@ -104,49 +108,146 @@ async function loadStatsInBackground(deps: CollectDeps, read: DashboardRead): Pr
   }
 }
 
+/** True once the report is on screen: from then on, updates happen behind it and never replace it with a loading screen. */
+let reportShown = false
+let lastRead: DashboardRead | undefined
+let lastApi: ApiLimits | undefined
+let boardStatus: BoardStatus | null = null
+let refreshTimer: NodeJS.Timeout | undefined
+let limitsTimer: NodeJS.Timeout | undefined
+let recentTimer: NodeJS.Timeout | undefined
+let recentBackoffUntil = 0
+
+/** How often the dashboard is read again by itself (stretched when GitHub's allowance runs low), and how soon after a failed read. */
+const REFRESH_MS = 2 * 60_000
+const RETRY_AFTER_ERROR_MS = 5 * 60_000
+
+/** Writes the report for `what` to the user-data folder and shows it. What is shown is what the app already knows. */
+async function showReport(
+  deps: CollectDeps,
+  what: { owner: string; repos: DashboardRead['repos']; recent?: DashboardRead['recent']; at: number; boardStatus?: BoardStatus },
+): Promise<void> {
+  const saved = await savedStats(deps, what.owner)
+  const data: ReportData = {
+    generatedAt: what.at,
+    board: { owner: what.owner, repos: what.repos },
+    stats: { prs: saved.prs, repos: saved.repos, you: saved.you },
+    statsStatus: isLoadingStats ? (statsStatus ?? undefined) : undefined,
+    boardStatus: what.boardStatus,
+    recentPrs: what.recent,
+    api: lastApi,
+    logo: await readLogo(),
+  }
+  // The report is a real file, not a data: address, because years of history are too big for one.
+  const page = userFile('report.html')
+  await writeFile(page, renderReport(data), 'utf8')
+  onScreen = { owner: what.owner, prs: new Set(what.repos.flatMap(r => r.prs.map(p => `${r.name}#${p.number}`))) }
+  await win?.loadFile(page)
+  reportShown = true
+  win?.setTitle('Shipwatch')
+}
+
+const scheduleRefresh = (ms: number): void => {
+  if (refreshTimer) clearTimeout(refreshTimer)
+  refreshTimer = setTimeout(() => void refresh(), ms)
+}
+
+/**
+ * Brings the window up to date. What the app already knows (the dashboard it saved last time and the stats
+ * history on disk) goes on screen straight away; GitHub is read behind it, with a banner saying so, and the
+ * page is updated when it arrives. The loading screen is only for a very first start, when nothing is saved.
+ */
 async function refresh(): Promise<void> {
   if (isRefreshing || !win) return
   isRefreshing = true
   try {
-    await showHtml(loadingPage())
-    const say = (text: string): void => {
-      const fraction = progressFraction(text)
-      void win?.webContents.executeJavaScript(`window.setProgress(${JSON.stringify(text)}, ${fraction ?? 'undefined'})`).catch(() => {})
-    }
     const config = await loadConfig()
-    const deps: CollectDeps = {
-      io: nodeIO(),
-      store: new FileStore(userFile('stats.json')),
-      config,
-      now: Date.now(),
-      infraVerdicts,
-      onProgress: say,
+    const base = { io: nodeIO(), store: new FileStore(userFile('stats.json')), config, infraVerdicts }
+
+    if (!reportShown) {
+      const saved = await loadSavedDashboard(userFile('board.json'))
+      if (saved) await showReport({ ...base, now: Date.now() }, { ...saved, boardStatus: { state: 'loading', text: 'Starting...' } })
+      else await showHtml(loadingPage())
     }
-    // Step one: the dashboard, which is quick. The window shows it as soon as it is read, with whatever stats
-    // history is already saved; the slow part (older history) is read afterwards, in the background.
-    const read = await collectDashboard(deps)
-    const saved = await savedStats(deps, read.owner)
-    onScreen = { owner: read.owner, prs: new Set(read.repos.flatMap(r => r.prs.map(p => `${r.name}#${p.number}`))) }
-    const loadingStats = isLoadingStats || shouldLoadStats()
-    const status: StatsStatus | undefined = isLoadingStats ? (statsStatus ?? undefined) : loadingStats ? { state: 'loading', text: 'Starting...' } : undefined
-    // The report is a real file, not a data: address, because years of history are too big for one.
-    const page = userFile('report.html')
-    const data: ReportData = {
-      generatedAt: deps.now,
-      board: { owner: read.owner, repos: read.repos },
-      stats: { prs: saved.prs, repos: saved.repos, you: saved.you },
-      statsStatus: status,
-      logo: await readLogo(),
+    const behind = reportShown
+    if (behind) {
+      boardStatus = { state: 'loading', text: 'Reading repos from GitHub...' }
+      toPage(setBoardStatusScript(boardStatus))
     }
-    await writeFile(page, renderReport(data), 'utf8')
-    await win.loadFile(page)
-    win.setTitle('Shipwatch')
-    if (!isLoadingStats && loadingStats) void loadStatsInBackground({ ...deps, onProgress: undefined }, read)
+
+    const onProgress = (text: string): void => {
+      if (behind) {
+        boardStatus = { state: 'loading', text }
+        toPage(setBoardStatusScript(boardStatus))
+      } else {
+        const fraction = progressFraction(text)
+        void win?.webContents.executeJavaScript(`window.setProgress(${JSON.stringify(text)}, ${fraction ?? 'undefined'})`).catch(() => {})
+      }
+    }
+    let read: DashboardRead
+    const deps: CollectDeps = { ...base, now: Date.now(), onProgress }
+    try {
+      read = await collectDashboard(deps)
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      if (!behind) throw err
+      // The saved dashboard stays on screen; the banner says why it is not current and the update tries again later.
+      boardStatus = { state: 'error', text: message }
+      toPage(setBoardStatusScript(boardStatus))
+      // A rate limit says when it resets (the message has the time); ask again then. Anything else, in a few minutes.
+      scheduleRefresh(err instanceof RateLimited ? err.retryInMs : RETRY_AFTER_ERROR_MS)
+      return
+    }
+    lastRead = read
+    await saveDashboard(userFile('board.json'), { owner: read.owner, repos: read.repos, recent: read.recent, at: deps.now })
+    if (behind) {
+      onScreen = { owner: read.owner, prs: new Set(read.repos.flatMap(r => r.prs.map(p => `${r.name}#${p.number}`))) }
+      toPage(setBoardScript({ owner: read.owner, repos: read.repos }, deps.now, read.recent))
+      boardStatus = null
+      toPage(setBoardStatusScript(null))
+    } else {
+      await showReport(deps, { owner: read.owner, repos: read.repos, recent: read.recent, at: deps.now })
+    }
+    startLiveTimers()
+    void updateLimits()
+    if (!isLoadingStats && shouldLoadStats()) void loadStatsInBackground({ ...deps, onProgress: undefined }, read)
+    scheduleRefresh(pace(read.budget, Date.now(), REFRESH_MS).delayMs)
   } catch (err) {
     await showHtml(errorPage(err instanceof Error ? err.message : String(err))).catch(() => {})
   } finally {
     isRefreshing = false
   }
+}
+
+/** What is left of GitHub's allowances, asked of the endpoint that costs nothing, and handed to the header's readout. */
+async function updateLimits(): Promise<void> {
+  if (!lastRead) return
+  const limits = await fetchApiLimits(nodeIO(), lastRead.access)
+  if (!limits) return
+  lastApi = limits
+  toPage(setApiScript(limits))
+}
+
+/** The last hour's PRs, for the clock's rim, read again each minute (one point) unless GitHub has been refusing. */
+async function updateRecent(): Promise<void> {
+  if (!lastRead || isRefreshing || Date.now() < recentBackoffUntil) return
+  try {
+    const recent = await fetchRecentPrs(nodeIO(), lastRead.access, lastRead.owner, Date.now() - HOUR_MS)
+    lastRead = { ...lastRead, recent }
+    toPage(setRecentScript(recent))
+  } catch {
+    recentBackoffUntil = Date.now() + RETRY_AFTER_ERROR_MS
+  }
+}
+
+function startLiveTimers(): void {
+  limitsTimer ??= setInterval(() => void updateLimits(), 30_000)
+  recentTimer ??= setInterval(() => void updateRecent(), 60_000)
+}
+
+function stopTimers(): void {
+  for (const t of [refreshTimer, limitsTimer, recentTimer]) if (t) clearTimeout(t)
+  refreshTimer = limitsTimer = recentTimer = undefined
 }
 
 function setupMenu(): void {
@@ -243,6 +344,8 @@ function createWindow(): void {
   })
   win.on('closed', () => {
     win = undefined
+    reportShown = false
+    stopTimers()
   })
 }
 
