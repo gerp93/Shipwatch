@@ -1,0 +1,17 @@
+{
+  // The report page's script runs in a browser, so unlike the core it may use the DOM. It still imports the
+  // core for every decision (what the numbers are, how a chart is drawn); this is only the page around them.
+  "compilerOptions": {
+    "target": "es2023",
+    "lib": ["es2023", "dom"],
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "types": []
+  },
+  "include": ["./**/*.ts", "../core/**/*.ts"],
+  "exclude": ["../core/**/*.test.ts"]
+}

@@ -33,6 +33,8 @@ Anything that has to be shown, toasted, or acted on is the host's business: the 
 | `statsFetch.ts` | The Stats queries (merged PRs with their commits, repos created). |
 | `statsService.ts` | `refreshStats`: bring the history up to date, fetching only what is new, and keep it in a `Store`. |
 | `charts.ts` | The Stats charts as SVG strings: donut, stacked bars, weekly columns, legend. |
+| `report.ts` | The full report: one self-contained HTML page (`renderReport`), plus how to open it. |
+| `reportClient.generated.ts` | GENERATED: the report page's script, bundled from `src/report/client.ts`. Run `node scripts/build-report.mjs` after changing it. |
 | `links.ts` | Where each part of a repo row links to, and the strict URL check the engine demands. |
 
 Tests sit beside the code (`*.test.ts`) and run with `claude plugin test .`.
