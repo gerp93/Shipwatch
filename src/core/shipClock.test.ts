@@ -16,6 +16,7 @@ const pr = (n: number, minutesAgo: number, over: Partial<RecentPr> = {}): Recent
   createdAt: new Date(NOW - minutesAgo * MIN).toISOString(),
   state: 'open',
   isDraft: false,
+  parked: false,
   checks: 'none',
   mergedAt: null,
   ...over,
@@ -53,7 +54,8 @@ test('PRs opened in the same minute are put on different tracks so none hides an
 test('a dot is coloured by where its PR stands now', () => {
   expect(dotStatus(pr(1, 1, { state: 'merged', mergedAt: '2026-10-15T14:29:00Z' }))).toBe('merged')
   expect(dotStatus(pr(1, 1, { state: 'closed' }))).toBe('closed')
-  expect(dotStatus(pr(1, 1, { isDraft: true, checks: 'failing' }))).toBe('draft') // a draft is a draft first
+  expect(dotStatus(pr(1, 1, { isDraft: true, parked: true, checks: 'failing' }))).toBe('draft') // a draft is a draft first
+  expect(dotStatus(pr(1, 1, { parked: true }))).toBe('draft') // so is one titled do not merge
   expect(dotStatus(pr(1, 1, { checks: 'failing' }))).toBe('failing')
   expect(dotStatus(pr(1, 1, { checks: 'running' }))).toBe('building')
   expect(dotStatus(pr(1, 1, { checks: 'passing' }))).toBe('ready')

@@ -1,5 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
+import { NOT_FOR_MERGE, isParked } from './parked'
 import { analyze, checksOf, failedOnMain, fixPrompt, isInfraMessage, markInfra, snapshot, transitions } from './analyze'
 import type { RawRepo } from './analyze'
 
@@ -168,4 +169,42 @@ test('a draft whose build finishes is not announced', () => {
   const was = [analyze(repo({ pullRequests: { nodes: [pr('PENDING', { number: 6, isDraft: true })] } }), NOW, 6 * HOUR)]
   const now = [analyze(repo({ pullRequests: { nodes: [pr('FAILURE', { number: 6, isDraft: true })] } }), NOW, 6 * HOUR)]
   expect(transitions(snapshot(was), now)).toEqual([])
+})
+
+test('a PR titled do not merge is set aside like a draft: it does not decide where the repo stands', () => {
+  for (const title of ['DO NOT MERGE: everything this repo changed', '[do-not-merge] keep open', 'Do not merge yet', 'do_not merge']) {
+    expect(NOT_FOR_MERGE.test(title)).toBe(title !== 'do_not merge')
+  }
+  expect(isParked('Anything', true)).toBe(true) // a draft
+  expect(isParked('Add a thing', false)).toBe(false)
+  expect(isParked('Do not merge', false)).toBe(true)
+
+  // A real PR with failing checks makes the repo fail; the same PR titled do not merge does not.
+  const failing = analyze(repo({ pullRequests: { nodes: [pr('FAILURE')] } }), NOW, 6 * HOUR)
+  expect(failing.level).toBe('fail')
+  const parked = analyze(repo({ pullRequests: { nodes: [pr('FAILURE', { title: 'DO NOT MERGE: sync from the original' })] } }), NOW, 6 * HOUR)
+  expect(parked.prs[0]!.parked).toBe(true)
+  expect(parked.prs[0]!.isDraft).toBe(false) // it is not a draft, so it is not called one
+  expect(parked.level).toBe('draft')
+  expect(parked.headline).toBe('#7 set aside')
+  // A real draft still reads as a draft.
+  expect(analyze(repo({ pullRequests: { nodes: [pr(null, { isDraft: true })] } }), NOW, 6 * HOUR).headline).toBe('#7 draft')
+})
+
+test('a repo with nothing to act on is Recently merged if its default branch moved in the last few days, else Quiet', () => {
+  const release = { tagName: 'v1', publishedAt: '2026-10-05T11:00:00Z' }
+  const recent = analyze(repo({ latestRelease: release, headDate: '2026-10-03T12:00:00Z' }), NOW, 6 * HOUR)
+  expect(recent.level).toBe('recent')
+  expect(recent.headline).toBe('up to date · v1 · merged 2d ago')
+  const quiet = analyze(repo({ latestRelease: { tagName: 'v1', publishedAt: '2026-09-20T00:00:00Z' }, headDate: '2026-09-19T00:00:00Z' }), NOW, 6 * HOUR)
+  expect(quiet.level).toBe('idle')
+  expect(quiet.headline).toBe('up to date · v1')
+  // The edge is three days; a repo with no releases follows the same rule.
+  expect(analyze(repo({ headDate: '2026-10-02T13:00:00Z' }), NOW, 6 * HOUR).level).toBe('recent') // 2 days 23 hours ago
+  expect(analyze(repo({ headDate: '2026-10-02T11:00:00Z' }), NOW, 6 * HOUR).level).toBe('idle') // 3 days 1 hour ago
+  expect(analyze(repo({ headDate: '2026-10-02T13:00:00Z' }), NOW, 6 * HOUR).headline).toBe('no releases · merged 2d ago')
+  expect(analyze(repo({ headDate: '2026-09-30T00:00:00Z' }), NOW, 6 * HOUR).level).toBe('idle')
+  // Things that need you still come first.
+  expect(analyze(repo({ head: 'FAILURE', headDate: '2026-10-05T10:00:00Z' }), NOW, 6 * HOUR).level).toBe('fail')
+  expect(analyze(repo({ latestRelease: { tagName: 'v1', publishedAt: '2026-10-04T00:00:00Z' } }), NOW, 6 * HOUR).level).toBe('pending')
 })

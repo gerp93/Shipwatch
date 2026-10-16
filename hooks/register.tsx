@@ -80,6 +80,7 @@ const LEVEL_COLOR: Record<Level, string | undefined> = {
   running: 'yellow',
   ready: 'cyan',
   pending: 'yellow',
+  recent: 'magenta',
   draft: undefined,
   idle: undefined,
 }
@@ -362,9 +363,11 @@ export const register: Register = (on, options) => {
     const columns = (e.props as { bodyColumns?: number }).bodyColumns ?? e.viewport?.columns ?? 80
 
     const isStaleShown = await read($, showStale)
-    const active = b.repos.filter(r => r.level !== 'idle' && !r.isStale)
-    const stale = b.repos.filter(r => r.level !== 'idle' && r.isStale)
-    const idle = b.repos.filter(r => r.level === 'idle')
+    // Recently merged repos have nothing to act on, so the pane keeps them with the quiet ones.
+    const isQuiet = (r: RepoView): boolean => r.level === 'idle' || r.level === 'recent'
+    const active = b.repos.filter(r => !isQuiet(r) && !r.isStale)
+    const stale = b.repos.filter(r => !isQuiet(r) && r.isStale)
+    const idle = b.repos.filter(isQuiet)
     const nameWidth = Math.min(22, Math.max(8, ...active.map(r => r.name.length))) + 2
     const refreshLabel = b.isLoading ? 'Refreshing…' : 'Refresh'
 

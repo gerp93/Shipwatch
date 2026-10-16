@@ -56,6 +56,6 @@ export const stepLinks = (r: RepoView): StepLinks => {
  */
 export const headlineLink = (r: RepoView): string | undefined => {
   const pr = r.prs[0]
-  if (pr && (pr.hasConflict || pr.isDraft)) return safeHref(pr.url)
+  if (pr && (pr.hasConflict || pr.parked)) return safeHref(pr.url)
   return stepLinks(r)[1]
 }

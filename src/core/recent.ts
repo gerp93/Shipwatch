@@ -3,6 +3,7 @@
 
 import type { Budget } from './budget'
 import { graphql } from './github'
+import { isParked } from './parked'
 import type { Access, IO } from './ports'
 import type { Checks, RecentPr } from './types'
 
@@ -68,6 +69,7 @@ export const fetchRecentPrs = async (
       createdAt: n.createdAt,
       state,
       isDraft: n.isDraft === true,
+      parked: isParked(String(n.title ?? ''), n.isDraft === true),
       checks: state === 'open' ? checksOf(n.commits?.nodes?.[0]?.commit?.statusCheckRollup?.state) : 'none',
       mergedAt: typeof n.mergedAt === 'string' ? n.mergedAt : null,
     })

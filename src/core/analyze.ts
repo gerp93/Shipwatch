@@ -1,3 +1,4 @@
+import { isParked } from './parked'
 import type { Checks, Level, PrView, RepoView, StepState } from './types'
 
 /** One check on a commit: a check run (`status`, `conclusion`) or a legacy commit status (`state`). */
@@ -83,6 +84,7 @@ const prView = (pr: RawPr): PrView => ({
   url: pr.url,
   branch: pr.headRefName,
   isDraft: pr.isDraft,
+  parked: isParked(pr.title, pr.isDraft),
   hasConflict: pr.mergeable === 'CONFLICTING',
   checks: checksOf(pr.commits?.nodes?.[0]?.commit?.statusCheckRollup),
   updatedAt: pr.updatedAt,
@@ -91,13 +93,22 @@ const prView = (pr: RawPr): PrView => ({
 /** Lower is more urgent; the PR that decides where the repo sits in the stepper. A draft is work in
  * progress, so it never outranks a real PR however its checks look. */
 const weight = (pr: PrView): number => {
-  if (pr.isDraft) return 3
+  if (pr.parked) return 3
   if (pr.checks === 'failing' || pr.hasConflict) return 0
   if (pr.checks === 'running') return 1
   return 2
 }
 
 const steps = (...s: StepState[]): Steps => s as Steps
+
+/**
+ * Nothing to act on: `recent` if the default branch was updated within `activeMs` (the headline then says how long
+ * ago), else `idle`, a quiet repo.
+ */
+const calm = (headDate: string, now: number, activeMs: number, headline: string): { level: Level; headline: string } => {
+  const age = now - Date.parse(headDate)
+  return age >= 0 && age < activeMs ? { level: 'recent', headline: `${headline} · merged ${ago(headDate, now)} ago` } : { level: 'idle', headline }
+}
 
 /**
  * Where a repo is in the iteration: PR -> Build -> Merged -> Released.
@@ -107,7 +118,7 @@ const steps = (...s: StepState[]): Steps => s as Steps
  * the head commit. `recentMs` is how long after a merge a missing release still
  * counts as "awaiting" rather than "this repo just doesn't release every commit".
  */
-const classify = (raw: RawRepo, now: number, recentMs: number): RepoView => {
+const classify = (raw: RawRepo, now: number, recentMs: number, activeMs: number): RepoView => {
   const target = raw.defaultBranchRef?.target
   const headChecks = checksOf(target?.statusCheckRollup)
   const headDate = target?.committedDate ?? ''
@@ -132,7 +143,7 @@ const classify = (raw: RawRepo, now: number, recentMs: number): RepoView => {
   }
 
   // Drafts come last; the stepper follows the first real PR, and only falls back to a draft below.
-  const pr = prs.find(p => !p.isDraft)
+  const pr = prs.find(p => !p.parked)
   if (pr) {
     const n = `#${pr.number}`
     if (pr.hasConflict) {
@@ -162,7 +173,7 @@ const classify = (raw: RawRepo, now: number, recentMs: number): RepoView => {
     ...base,
     steps: steps('done', 'todo', 'todo', 'todo'),
     level: 'draft',
-    headline: prs.length === 1 ? `#${draft!.number} draft` : `${prs.length} draft PRs`,
+    headline: prs.length === 1 ? `#${draft!.number} ${draft!.isDraft ? 'draft' : 'set aside'}` : `${prs.length} draft PRs`,
   })
   if (headChecks === 'running') {
     return { ...base, steps: steps('done', 'done', 'done', 'running'), level: 'running', headline: 'building main' }
@@ -171,22 +182,20 @@ const classify = (raw: RawRepo, now: number, recentMs: number): RepoView => {
     return { ...base, steps: steps('done', 'done', 'done', 'failed'), level: 'fail', headline: 'main build failing' }
   }
   if (!release) {
-    return draft ? draftView() : { ...base, steps: steps('done', 'done', 'done', 'todo'), level: 'idle', headline: 'no releases' }
+    return draft ? draftView() : { ...base, steps: steps('done', 'done', 'done', 'todo'), ...calm(headDate, now, activeMs, 'no releases') }
   }
   const isReleased = Date.parse(release.publishedAt) >= Date.parse(headDate)
   if (isReleased) {
     return draft
       ? draftView()
-      : { ...base, steps: steps('done', 'done', 'done', 'done'), level: 'idle', headline: `up to date · ${release.tag}` }
+      : { ...base, steps: steps('done', 'done', 'done', 'done'), ...calm(headDate, now, activeMs, `up to date · ${release.tag}`) }
   }
   const isRecent = now - Date.parse(headDate) < recentMs
   if (!isRecent && draft) return draftView()
-  return {
-    ...base,
-    steps: steps('done', 'done', 'done', isRecent ? 'running' : 'todo'),
-    level: isRecent ? 'pending' : 'idle',
-    headline: isRecent ? `awaiting release · last ${release.tag}` : `unreleased commits · last ${release.tag}`,
+  if (isRecent) {
+    return { ...base, steps: steps('done', 'done', 'done', 'running'), level: 'pending', headline: `awaiting release · last ${release.tag}` }
   }
+  return { ...base, steps: steps('done', 'done', 'done', 'todo'), ...calm(headDate, now, activeMs, `unreleased commits · last ${release.tag}`) }
 }
 
 const DAY_MS = 86_400_000
@@ -196,8 +205,8 @@ const DAY_MS = 86_400_000
  * activity on one of its PRs) and that is not building is stale. Old conflicted
  * drafts would otherwise outrank the build you are actually waiting on.
  */
-export const analyze = (raw: RawRepo, now: number, recentMs: number, staleMs: number = 14 * DAY_MS): RepoView => {
-  const view = classify(raw, now, recentMs)
+export const analyze = (raw: RawRepo, now: number, recentMs: number, staleMs: number = 14 * DAY_MS, activeMs: number = 3 * DAY_MS): RepoView => {
+  const view = classify(raw, now, recentMs, activeMs)
   const touched = Math.max(
     Date.parse(raw.pushedAt) || 0,
     ...(raw.pullRequests?.nodes ?? []).map(p => Date.parse(p.updatedAt) || 0),
@@ -205,7 +214,7 @@ export const analyze = (raw: RawRepo, now: number, recentMs: number, staleMs: nu
   return { ...view, isStale: view.level !== 'running' && now - touched > staleMs }
 }
 
-const URGENCY: Record<Level, number> = { fail: 0, running: 1, ready: 2, pending: 3, draft: 4, idle: 5 }
+const URGENCY: Record<Level, number> = { fail: 0, running: 1, ready: 2, pending: 3, recent: 4, draft: 5, idle: 6 }
 
 /** Attention first; within a level, most recently pushed first. */
 export const byUrgency = (a: RepoView, b: RepoView): number =>
@@ -240,7 +249,7 @@ export const transitions = (before: Seen, repos: readonly RepoView[]): string[] 
     if (!was) continue
     settled(was.head, r.headChecks, `${r.name} main`)
     // A draft's checks are no one's to-do, so they are not announced.
-    for (const p of r.prs) if (!p.isDraft) settled(was.prs[p.number], p.checks, `${r.name} #${p.number}`)
+    for (const p of r.prs) if (!p.parked) settled(was.prs[p.number], p.checks, `${r.name} #${p.number}`)
     if (was.tag && r.release && r.release.tag !== was.tag) {
       out.push(`⬆ ${r.name} ${r.release.tag} released — ready to download`)
     }

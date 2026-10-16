@@ -13,16 +13,19 @@ import { clockPanel } from './clockPanel'
 
 const data = (window as unknown as { SHIPWATCH_DATA: ReportData }).SHIPWATCH_DATA
 
-const LEVEL_ORDER: Record<Level, number> = { fail: 0, running: 1, ready: 2, pending: 3, draft: 4, idle: 5 }
+const LEVEL_ORDER: Record<Level, number> = { fail: 0, running: 1, ready: 2, pending: 3, recent: 4, draft: 5, idle: 6 }
 const LEVEL_LABEL: Record<Level, string> = {
   fail: 'Failing',
   running: 'Building',
   ready: 'Ready to merge',
   pending: 'Awaiting release',
+  recent: 'Recently merged',
   draft: 'Draft only',
   idle: 'Quiet',
 }
 const STEP_NAMES = ['PR', 'Build', 'Merged', 'Released']
+/** Each step has its own colour when done, as GitHub colours them: open green, checks green, merged purple, released blue. */
+const STEP_CLASS = ['open', 'checks', 'merged', 'released']
 
 type Sort = { key: string; dir: 1 | -1 }
 
@@ -34,6 +37,8 @@ type State = {
   repo: string | null
   q: string
   level: Level | 'all'
+  /** Show draft PRs (and PRs titled "do not merge") and the repos that have only those; off unless asked for. */
+  drafts: boolean
   sort: Sort
   dashSort: Sort
 }
@@ -46,8 +51,26 @@ const state: State = {
   repo: null,
   q: '',
   level: 'all',
+  drafts: storedDrafts(),
   sort: { key: 'commits', dir: -1 },
   dashSort: { key: 'level', dir: 1 },
+}
+
+// Whether to include drafts is remembered between visits; storage can be unavailable, so it is optional.
+const DRAFTS_KEY = 'shipwatch-drafts'
+function storedDrafts(): boolean {
+  try {
+    return localStorage.getItem(DRAFTS_KEY) === '1'
+  } catch {
+    return false
+  }
+}
+function rememberDrafts(on: boolean): void {
+  try {
+    localStorage.setItem(DRAFTS_KEY, on ? '1' : '0')
+  } catch {
+    // Not remembered; still applied for this page.
+  }
 }
 
 type Child = Node | string | null | false | undefined
@@ -101,7 +124,7 @@ const bridge = (window as unknown as { shipwatch?: { mergePr: (repo: string, num
  * the user to confirm and re-reads the PR from GitHub, so this is only the way in, not the decision.
  */
 const mergeControl = (repo: string, p: PrView): Child => {
-  if (!bridge || p.isDraft || p.hasConflict || p.checks === 'failing') return null
+  if (!bridge || p.parked || p.hasConflict || p.checks === 'failing') return null
   const waiting = p.checks === 'running'
   const note = el('span', { class: 'dim' })
   const btn = el('button', { class: 'btn', title: waiting ? 'Merges when its checks pass' : 'Merge this PR' }, waiting ? 'Merge when checks pass' : 'Merge')
@@ -124,11 +147,16 @@ const mergeControl = (repo: string, p: PrView): Child => {
 
 function dashboard(): HTMLElement {
   const needle = state.q.toLowerCase()
-  const repos = data.board.repos.filter(r => (state.level === 'all' || r.level === state.level) && r.name.toLowerCase().includes(needle))
+  // Drafts and "do not merge" PRs are left out unless asked for: repos with only those are hidden, and such PRs are
+  // not listed against the others.
+  const draftOnly = data.board.repos.filter(r => r.level === 'draft').length
+  const inView = data.board.repos.filter(r => state.drafts || r.level !== 'draft')
+  const openPrs = (r: RepoView): PrView[] => (state.drafts ? r.prs : r.prs.filter(p => !p.parked))
+  const repos = inView.filter(r => (state.level === 'all' || r.level === state.level) && r.name.toLowerCase().includes(needle))
   const keyOf: Record<string, (r: RepoView) => string | number> = {
     level: r => LEVEL_ORDER[r.level],
     name: r => r.name.toLowerCase(),
-    prs: r => r.prs.length,
+    prs: r => openPrs(r).length,
     pushed: r => -Date.parse(r.pushedAt || '1970-01-01'),
   }
   const pick = keyOf[state.dashSort.key] ?? keyOf.level!
@@ -138,12 +166,12 @@ function dashboard(): HTMLElement {
     state.dashSort = { key, dir: state.dashSort.key === key ? (-state.dashSort.dir as 1 | -1) : 1 }
     draw()
   }
-  const counts = (Object.keys(LEVEL_ORDER) as Level[]).map(l => [l, data.board.repos.filter(r => r.level === l).length] as const)
+  const counts = (Object.keys(LEVEL_ORDER) as Level[]).map(l => [l, inView.filter(r => r.level === l).length] as const)
 
   return el(
     'section',
     {},
-    clockPanel(() => data.recentPrs),
+    clockPanel(() => (state.drafts ? data.recentPrs : data.recentPrs?.filter(p => !p.parked))),
     el(
       'div',
       { class: 'row wrap' },
@@ -156,8 +184,24 @@ function dashboard(): HTMLElement {
           drawKeepFocus('.search')
         },
       }),
-      button(`All ${data.board.repos.length}`, state.level === 'all', () => ((state.level = 'all'), draw())),
+      button(`All ${inView.length}`, state.level === 'all', () => ((state.level = 'all'), draw())),
       ...counts.filter(([, n]) => n > 0).map(([l, n]) => button(`${LEVEL_LABEL[l]} ${n}`, state.level === l, () => ((state.level = l), draw()))),
+      el('span', { class: 'grow' }),
+      el(
+        'label',
+        { class: 'check', title: 'Draft PRs and PRs titled "do not merge" are left out of the list, the clock and each repo\'s status unless this is on.' },
+        el('input', {
+          type: 'checkbox',
+          checked: state.drafts ? 'checked' : undefined,
+          onchange: (e: Event) => {
+            state.drafts = (e.target as HTMLInputElement).checked
+            if (!state.drafts && state.level === 'draft') state.level = 'all'
+            rememberDrafts(state.drafts)
+            draw()
+          },
+        }),
+        ` Include drafts${state.drafts || draftOnly === 0 ? '' : ` (${draftOnly} draft-only ${draftOnly === 1 ? 'repo' : 'repos'} hidden)`}`,
+      ),
     ),
     el(
       'table',
@@ -184,13 +228,13 @@ function dashboard(): HTMLElement {
             { class: `lv-${r.level}` },
             el('td', {}, el('span', { class: `pill ${r.level}` }, r.isInfra ? 'Runner outage' : LEVEL_LABEL[r.level])),
             el('td', {}, el('a', { href: r.url, target: '_blank', rel: 'noopener' }, r.name), r.headline ? el('div', { class: 'dim' }, r.headline) : null),
-            el('td', { class: 'where' }, el('div', { class: 'steps' }, ...r.steps.map((s, i) => el('span', { class: `step ${s}`, title: `${STEP_NAMES[i]}: ${s}` }, STEP_NAMES[i])))),
+            el('td', { class: 'where' }, el('div', { class: 'steps' }, ...r.steps.map((s, i) => el('span', { class: `step ${STEP_CLASS[i]} ${s}`, title: `${STEP_NAMES[i]}: ${s}` }, STEP_NAMES[i])))),
             el(
               'td',
               {},
-              ...(r.prs.length
-                ? r.prs.map(p =>
-                    el('div', {}, el('a', { href: p.url, target: '_blank', rel: 'noopener' }, `#${p.number}`), ` ${p.title}`, p.isDraft ? el('span', { class: 'dim' }, ' draft') : null, mergeControl(r.name, p)),
+              ...(openPrs(r).length
+                ? openPrs(r).map(p =>
+                    el('div', {}, el('a', { href: p.url, target: '_blank', rel: 'noopener' }, `#${p.number}`), ` ${p.title}`, p.isDraft ? el('span', { class: 'dim' }, ' draft') : p.parked ? el('span', { class: 'dim' }, ' set aside') : null, mergeControl(r.name, p)),
                   )
                 : [el('span', { class: 'dim' }, '-')]),
             ),
