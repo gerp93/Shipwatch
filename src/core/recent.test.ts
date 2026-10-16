@@ -28,7 +28,7 @@ const node = (over: Record<string, unknown>) => ({
   mergedAt: null,
   isDraft: false,
   state: 'OPEN',
-  repository: { name: 'app' },
+  repository: { name: 'app', latestRelease: { publishedAt: '2026-10-15T14:30:00Z' } },
   commits: { nodes: [{ commit: { statusCheckRollup: { state: 'SUCCESS' } } }] },
   ...over,
 })
@@ -60,6 +60,7 @@ test('recent PRs are read with their state and checks, newest first, from the ti
   const by = Object.fromEntries(prs.map(p => [p.number, p]))
   expect(by[1]).toMatchObject({ repo: 'app', state: 'open', checks: 'passing', isDraft: false, mergedAt: null })
   expect(by[2]).toMatchObject({ state: 'merged', mergedAt: '2026-10-15T14:25:00Z', checks: 'none' }) // checks only matter while open
+  expect(by[2]!.releasedAt).toBe('2026-10-15T14:30:00Z')
   expect(by[3]).toMatchObject({ state: 'closed', checks: 'none' })
   expect(by[4]!.isDraft).toBe(true)
   expect(by[5]!.checks).toBe('failing')

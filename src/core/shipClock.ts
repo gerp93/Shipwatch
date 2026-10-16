@@ -10,9 +10,10 @@ import type { RecentPr } from './types'
 export const WINDOW_MS = 60 * 60_000
 
 /** Where a recent PR stands, as the clock colours it. */
-export type DotStatus = 'merged' | 'ready' | 'building' | 'failing' | 'open' | 'draft' | 'closed'
+export type DotStatus = 'released' | 'merged' | 'ready' | 'building' | 'failing' | 'open' | 'draft' | 'closed'
 
 export const DOT_COLOR: Record<DotStatus, string> = {
+  released: '#2dbdb6',
   merged: '#8a7bd8',
   ready: '#3fa66b',
   building: '#d9a520',
@@ -23,6 +24,7 @@ export const DOT_COLOR: Record<DotStatus, string> = {
 }
 
 export const DOT_LABEL: Record<DotStatus, string> = {
+  released: 'released',
   merged: 'merged',
   ready: 'open, checks passing',
   building: 'open, checks running',
@@ -32,9 +34,16 @@ export const DOT_LABEL: Record<DotStatus, string> = {
   closed: 'closed without merging',
 }
 
+/** Whether a merged PR has shipped: its repo published a release at or after the moment it merged. */
+export const isReleased = (pr: RecentPr): boolean => {
+  const merged = Date.parse(pr.mergedAt ?? '')
+  const released = Date.parse(pr.releasedAt ?? '')
+  return pr.state === 'merged' && Number.isFinite(merged) && Number.isFinite(released) && released >= merged
+}
+
 /** The status a recent PR is drawn as. */
 export const dotStatus = (pr: RecentPr): DotStatus => {
-  if (pr.state === 'merged') return 'merged'
+  if (pr.state === 'merged') return isReleased(pr) ? 'released' : 'merged'
   if (pr.state === 'closed') return 'closed'
   if (pr.parked) return 'draft'
   if (pr.checks === 'failing') return 'failing'
@@ -92,14 +101,15 @@ export const dotsFor = (prs: readonly RecentPr[], now: number, minuteOf: (ms: nu
 }
 
 /** Counts for the last hour. */
-export type HourSummary = { opened: number; merged: number; open: number; failing: number; building: number; closed: number }
+export type HourSummary = { opened: number; merged: number; released: number; open: number; failing: number; building: number; closed: number }
 
 export const summarize = (prs: readonly RecentPr[], now: number): HourSummary => {
   const recent = inWindow(prs, now)
   const count = (pick: (p: RecentPr) => boolean): number => recent.filter(pick).length
   return {
     opened: recent.length,
-    merged: count(p => p.state === 'merged'),
+    merged: count(p => p.state === 'merged' && !isReleased(p)),
+    released: count(isReleased),
     open: count(p => p.state === 'open'),
     failing: count(p => p.state === 'open' && p.checks === 'failing'),
     building: count(p => p.state === 'open' && p.checks === 'running'),
@@ -111,7 +121,7 @@ export const summarize = (prs: readonly RecentPr[], now: number): HourSummary =>
 export const describeHour = (s: HourSummary): string => {
   if (s.opened === 0) return 'No PRs opened in the last hour'
   const open = s.open > 0 ? `${s.open} open${s.failing ? ` (${s.failing} failing)` : s.building ? ` (${s.building} building)` : ''}` : ''
-  const parts = [s.merged && `${s.merged} merged`, open, s.closed && `${s.closed} closed`].filter(Boolean)
+  const parts = [s.merged && `${s.merged} merged`, s.released && `${s.released} released`, open, s.closed && `${s.closed} closed`].filter(Boolean)
   return `${s.opened} ${s.opened === 1 ? 'PR' : 'PRs'} opened in the last hour${parts.length ? `: ${parts.join(', ')}` : ''}`
 }
 
