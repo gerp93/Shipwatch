@@ -7,7 +7,7 @@
 import { barsSvg, chartColor, donutSvg, legendSvg, linesSvg, weeksSvg } from '../core/charts'
 import type { ReportData } from '../core/report'
 import { THEME_IDS } from '../core/themes.generated'
-import { RANGES, YOU, actorLabel, aggregate, aisIn, bucketFor, commitSeries, compact, earliestKnown, rangeLabel, rangeSince, reposCreatedSince } from '../core/stats'
+import { RANGES, YOU, actorLabel, aggregate, aisIn, bucketFor, commitSeries, compact, earliestKnown, humansIn, rangeLabel, rangeSince, reposCreatedSince } from '../core/stats'
 import type { Level, PrView, RepoView, StatsMode } from '../core/types'
 import { clockPanel } from './clockPanel'
 
@@ -30,6 +30,7 @@ type State = {
   view: 'dashboard' | 'stats'
   range: (typeof RANGES)[number]
   mode: StatsMode
+  humans: StatsMode
   hidden: string[]
   repo: string | null
   q: string
@@ -42,6 +43,7 @@ const state: State = {
   view: data.board.repos.length > 0 ? 'dashboard' : 'stats',
   range: 365,
   mode: 'combined',
+  humans: 'combined',
   hidden: [],
   repo: null,
   q: '',
@@ -320,14 +322,15 @@ function statsBanner(): HTMLElement | null {
 function stats(): HTMLElement {
   const s = data.stats
   const ais = aisIn(s.prs)
+  const people = humansIn(s.prs)
   const sinceMs = rangeSince(state.range, data.generatedAt, earliestKnown(s.repos, s.prs))
   const inScope = state.repo ? s.prs.filter(p => p.repo === state.repo) : s.prs
-  const agg = aggregate(inScope, sinceMs, state.mode, state.hidden)
+  const agg = aggregate(inScope, sinceMs, state.mode, state.hidden, state.humans)
   const created = reposCreatedSince(s.repos, sinceMs)
   const sum = (pick: (a: (typeof agg.actors)[number]) => number) => agg.actors.reduce((n, a) => n + pick(a), 0)
   const commits = sum(a => a.commits)
   const you = agg.actors.find(a => a.actor === YOU)?.commits ?? 0
-  const color = (a: string) => chartColor(a, ais)
+  const color = (a: string) => chartColor(a, ais, people)
 
   const setSort = (key: string) => {
     state.sort = { key, dir: state.sort.key === key ? (-state.sort.dir as 1 | -1) : -1 }
@@ -368,6 +371,19 @@ function stats(): HTMLElement {
         }),
       ),
     ),
+    people.length > 0
+      ? el(
+          'div',
+          { class: 'row wrap' },
+          button(state.humans === 'combined' ? 'All other humans' : 'Each human', true, () => ((state.humans = state.humans === 'combined' ? 'separate' : 'combined'), draw())),
+          ...people.map(h =>
+            button(`${state.hidden.includes(h) ? '○' : '●'} ${actorLabel(h)}`, !state.hidden.includes(h), () => {
+              state.hidden = state.hidden.includes(h) ? state.hidden.filter(x => x !== h) : [...state.hidden, h]
+              draw()
+            }),
+          ),
+        )
+      : null,
     state.repo
       ? el('div', { class: 'row' }, el('span', { class: 'chip' }, `Repo: ${state.repo}`, el('button', { class: 'x', title: 'Show every repo', onclick: () => ((state.repo = null), draw()) }, '×')))
       : null,

@@ -17,6 +17,8 @@ import {
   commitSeries,
   compact,
   earliestKnown,
+  humansIn,
+  isAi,
   rangeLabel,
   rangeSince,
   reposCreatedSince,
@@ -48,7 +50,9 @@ test('a commit is attributed by author identity or by a Co-Authored-By trailer',
 })
 
 test('people who are not you, and automation, are neither You nor AI', () => {
-  expect(actorOf(commit({ author: { name: 'Grant', user: { login: 'GrantFBarnes' } } }), ME)).toBe(OTHERS)
+  expect(actorOf(commit({ author: { name: 'Grant', user: { login: 'GrantFBarnes' } } }), ME)).toBe('@GrantFBarnes')
+  expect(actorOf(commit({ author: { name: 'Grant Barnes', user: null } }), ME)).toBe('@Grant Barnes')
+  expect(actorOf(commit({ author: null }), ME)).toBe(OTHERS)
   expect(actorOf(commit({ author: { name: 'dependabot[bot]', user: { login: 'dependabot[bot]' } } }), ME)).toBe('Automation')
 })
 
@@ -224,8 +228,10 @@ test('range buttons say how far back they reach, and all time starts at the olde
   expect(earliestKnown([], [])).toBeUndefined()
 })
 
-test('the stored Others key is shown as other people', () => {
-  expect(actorLabel(OTHERS)).toBe('Other people')
+test('humans are shown as humans: the stored Others key, and each person by their login', () => {
+  expect(actorLabel(OTHERS)).toBe('Other humans')
+  expect(actorLabel('@GrantFBarnes')).toBe('GrantFBarnes')
+  expect(isAi('@GrantFBarnes')).toBe(false)
   expect(actorLabel(YOU)).toBe('You')
   expect(actorLabel('Claude')).toBe('Claude')
 })
@@ -264,4 +270,17 @@ test('the chart gets coarser as the range gets longer', () => {
   expect(bucketFor(180)).toBe('week')
   expect(bucketFor(365)).toBe('month')
   expect(bucketFor(3000)).toBe('month')
+})
+
+test('other humans fold into one, or stand on their own, and each can be hidden', () => {
+  const prs = [
+    pr('1', '2026-10-05T10:00:00Z', 'a', { You: [1, 1, 0], '@grant': [3, 30, 3], '@sam': [1, 5, 0] }),
+    pr('2', '2026-10-06T10:00:00Z', 'a', { '@grant': [2, 4, 0] }),
+  ]
+  const share = (a: ReturnType<typeof aggregate>) => Object.fromEntries(a.actors.map(x => [x.actor, x.commits]))
+  expect(share(aggregate(prs, 0, 'combined'))).toEqual({ You: 1, Others: 6 })
+  expect(share(aggregate(prs, 0, 'combined', [], 'separate'))).toEqual({ You: 1, '@grant': 5, '@sam': 1 })
+  expect(share(aggregate(prs, 0, 'combined', ['@sam'], 'separate'))).toEqual({ You: 1, '@grant': 5 })
+  expect(share(aggregate(prs, 0, 'combined', ['@sam']))).toEqual({ You: 1, Others: 5 })
+  expect(humansIn(prs)).toEqual(['@grant', '@sam'])
 })
