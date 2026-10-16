@@ -263,7 +263,7 @@ function dashboard(): HTMLElement {
           el(
             'tr',
             { class: `lv-${r.level}` },
-            el('td', {}, ...(r.isInfra ? [el('span', { class: `pill ${r.level}` }, 'Runner outage')] : pillsOf(r).map(p => el('span', { class: `pill ${p.cls}` }, p.text)))),
+            el('td', { class: 'pills' }, ...(r.isInfra ? [el('span', { class: `pill ${r.level}` }, 'Runner outage')] : pillsOf(r).map(p => el('span', { class: `pill ${p.cls}` }, p.text)))),
             el('td', {}, el('a', { href: r.url, target: '_blank', rel: 'noopener' }, r.name), r.headline ? el('div', { class: 'dim' }, r.headline) : null),
             el('td', { class: 'where' }, el('div', { class: 'steps' }, ...r.steps.map((s, i) => el('span', { class: `step ${s}`, title: `${STEP_NAMES[i]}: ${s}` }, STEP_NAMES[i])))),
             el(
