@@ -32,7 +32,7 @@ Anything that has to be shown, toasted, or acted on is the host's business: the 
 | `stats.ts` | Who each commit is attributed to; totals for a range and a choice of who to compare; week buckets; which dates still need fetching. |
 | `statsFetch.ts` | The Stats queries (merged PRs with their commits, repos created). |
 | `statsService.ts` | `refreshStats`: bring the history up to date, fetching only what is new, and keep it in a `Store`. |
-| `effort.ts` | Turns Claude Code's session transcripts into session time and tokens per repo (`parseTranscript`, `foldEffort`), and matches a project folder to a repo (`repoForProject`). The host reads the files; this only reads their text. |
+| `effort.ts` | Turns Claude Code's session transcripts into session time and tokens per repo (`parseTranscript`, `foldEffort`), matches a project folder to a repo (`repoForProject`), and walks the transcripts folder through a host's `list` and `read` (`collectEffort`; `engineEffortHost` builds one from the Claude engine's calls). The host reaches the files; this reads their text. |
 | `profile.ts` | A repo's build profile: calendar days, days worked, PRs, commits, AI share, net lines, releases, and (when the host supplies it) session time and tokens. What the Builds tab shows. |
 | `charts.ts` | The Stats charts as SVG strings: donut, stacked bars, weekly columns, legend. |
 | `report.ts` | The full report: one self-contained HTML page (`renderReport`), plus how to open it. |

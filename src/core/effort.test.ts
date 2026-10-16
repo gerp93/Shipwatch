@@ -1,6 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 
-import { ACTIVE_GAP_MS, foldEffort, parseTranscript, repoForProject } from './effort'
+import { ACTIVE_GAP_MS, ENGINE_READ_LIMIT, SLIM_TRANSCRIPT_SCRIPT, collectEffort, engineEffortHost, foldEffort, parseTranscript, repoForProject, transcriptsDirFor } from './effort'
+import type { EffortEntry, EffortHost } from './effort'
 
 const at = (min: number, sec = 0): string => new Date(Date.UTC(2026, 9, 15, 12, min, sec)).toISOString()
 const event = (over: Record<string, unknown>): string => JSON.stringify(over)
@@ -78,4 +79,112 @@ test('a worktree folder belongs to its repo, and a folder that merely contains t
   expect(repoForProject('C--Users-kgerp-source-repos-Shipwatcher', repos)).toBe(undefined)
   expect(repoForProject('C--Users-kgerp-AppData-Local-Temp-valutique-05e6cdfc', repos)).toBe(undefined)
   expect(repoForProject('ssh-823d8eaa-c351', repos)).toBe(undefined)
+})
+
+// A fake computer: a map from folder to its entries, and from file to its text.
+const file = (name: string, size = 100, mtimeMs = 1): EffortEntry => ({ name, kind: 'file', size, mtimeMs })
+const dirEntry = (name: string): EffortEntry => ({ name, kind: 'dir', size: 0, mtimeMs: 0 })
+const fakeHost = (folders: Record<string, EffortEntry[]>, texts: Record<string, string>, reads: string[] = []): EffortHost => ({
+  list: async path => folders[path] ?? [],
+  read: async path => {
+    reads.push(path)
+    return texts[path]
+  },
+})
+
+test('the folder walk finds sessions and sub-agents of the repos it knows, and reads nothing else', async () => {
+  const mine = 'root/C--src-My-App'
+  const reads: string[] = []
+  const host = fakeHost(
+    {
+      root: [dirEntry('C--src-My-App'), dirEntry('C--src-scratch'), file('stray.jsonl')],
+      [mine]: [file('s1.jsonl'), file('notes.txt'), dirEntry('s1')],
+      [`${mine}/s1/subagents`]: [file('agent-x.jsonl')],
+      'root/C--src-scratch': [file('s.jsonl')],
+    },
+    {
+      [`${mine}/s1.jsonl`]: [event({ type: 'user', timestamp: at(0) }), reply('a', 6, { input_tokens: 1, output_tokens: 9 })].join('\n'),
+      [`${mine}/s1/subagents/agent-x.jsonl`]: reply('b', 9, { output_tokens: 20 }),
+    },
+    reads,
+  )
+  const out = await collectEffort(host, 'root', ['My_App', 'Other'])
+  expect(Object.keys(out.effort)).toEqual(['My_App'])
+  expect(out.effort.My_App!.activeMs).toBe(9 * 60_000)
+  expect(out.effort.My_App!.tokens).toBe(30)
+  expect(out.effort.My_App!.sessions).toBe(2)
+  expect(out.skipped).toBe(0)
+  expect(reads.sort()).toEqual([`${mine}/s1.jsonl`, `${mine}/s1/subagents/agent-x.jsonl`])
+})
+
+test('a file whose size and time are unchanged comes from the cache, and one that cannot be read is counted', async () => {
+  const folder = 'root/C--src-App'
+  const folders = { root: [dirEntry('C--src-App')], [folder]: [file('a.jsonl', 10, 5), file('b.jsonl', 10, 5)] }
+  const texts = { [`${folder}/a.jsonl`]: event({ type: 'user', timestamp: at(0) }) + '\n' + event({ type: 'user', timestamp: at(3) }) }
+  const first = await collectEffort(fakeHost(folders, texts), 'root', ['App'])
+  expect(first.effort.App!.activeMs).toBe(3 * 60_000)
+  expect(first.skipped).toBe(1)
+  expect(Object.keys(first.cache)).toEqual([`${folder}/a.jsonl`])
+
+  const reads: string[] = []
+  const second = await collectEffort(fakeHost(folders, texts, reads), 'root', ['App'], first.cache)
+  expect(second.effort.App!.activeMs).toBe(3 * 60_000)
+  // Only the file that failed is tried again.
+  expect(reads).toEqual([`${folder}/b.jsonl`])
+
+  // A file that changed is read again.
+  const changed = { root: folders.root, [folder]: [file('a.jsonl', 20, 6)] }
+  const third = await collectEffort(fakeHost(changed, { [`${folder}/a.jsonl`]: event({ type: 'user', timestamp: at(0) }) }), 'root', ['App'], first.cache)
+  expect(third.effort.App!.activeMs).toBe(0)
+})
+
+test('a missing transcripts folder gives nothing', async () => {
+  const out = await collectEffort(fakeHost({}, {}), 'nowhere', ['App'])
+  expect(out.effort).toEqual({})
+  expect(out.skipped).toBe(0)
+})
+
+test('the transcripts folder is under CLAUDE_CONFIG_DIR, else the home folder', () => {
+  expect(transcriptsDirFor({ CLAUDE_CONFIG_DIR: '/cfg/', HOME: '/home/me' })).toBe('/cfg/projects')
+  expect(transcriptsDirFor({ HOME: '/home/me/' })).toBe('/home/me/.claude/projects')
+  expect(transcriptsDirFor({ USERPROFILE: 'C:\\Users\\me' })).toBe('C:\\Users\\me/.claude/projects')
+  expect(transcriptsDirFor({})).toBe(undefined)
+})
+
+test('the slimming script is one line with nothing a command line would mangle', () => {
+  expect(SLIM_TRANSCRIPT_SCRIPT.includes('\n')).toBe(false)
+  expect(SLIM_TRANSCRIPT_SCRIPT.includes('"')).toBe(false)
+})
+
+test('through the engine, Node reduces a transcript; without Node a file that fits is read whole and a big one is left out', async () => {
+  const runs: string[][] = []
+  let nodeWorks = true
+  const engine = {
+    list: async () => [] as EffortEntry[],
+    read: async (path: string) => `whole:${path}`,
+    run: async (argv: readonly string[]) => {
+      runs.push([...argv])
+      if (!nodeWorks) throw new Error('spawn node ENOENT')
+      return { exitCode: 0, stdout: `slim:${argv[3]}` }
+    },
+  }
+  const host = engineEffortHost(engine)
+  expect(await host.read('a.jsonl', ENGINE_READ_LIMIT * 10)).toBe('slim:a.jsonl')
+  expect(runs[0]!.slice(0, 3)).toEqual(['node', '-e', SLIM_TRANSCRIPT_SCRIPT])
+
+  nodeWorks = false
+  expect(await host.read('small.jsonl', 1000)).toBe('whole:small.jsonl')
+  expect(await host.read('big.jsonl', ENGINE_READ_LIMIT + 1)).toBe(undefined)
+  // Node is not tried again once it could not start.
+  expect(runs.length).toBe(2)
+})
+
+test('through the engine, Node output that was cut short is not trusted', async () => {
+  const host = engineEffortHost({
+    list: async () => [],
+    read: async () => 'whole',
+    run: async () => ({ exitCode: 0, stdout: 'cut', isStdoutTruncated: true }),
+  })
+  expect(await host.read('a.jsonl', 10)).toBe('whole')
+  expect(await host.read('b.jsonl', ENGINE_READ_LIMIT + 1)).toBe(undefined)
 })
