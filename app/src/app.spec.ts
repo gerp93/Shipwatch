@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -9,6 +9,7 @@ import type { IO } from '../../src/core/ports'
 import { FileStore, nodeIO } from './adapters'
 import { readConfig } from './config'
 import { loadSavedDashboard, saveDashboard } from './collect'
+import { readEffort } from './effort'
 import { setApiScript, setBoardScript, setBoardStatusScript, setRecentScript, setStatsScript, setStatusScript, throttled } from './live'
 import { closeFromReport, mergeFromReport } from './merge'
 import type { Question } from './merge'
@@ -300,4 +301,43 @@ test('everything handed to the page while it is open is a literal that cannot en
   }
   assert.ok(setBoardScript(board, 7, undefined).endsWith(',7,null)')) // no recent list: the page keeps the one it has
   assert.equal(setBoardStatusScript(null), 'window.shipwatchLive&&window.shipwatchLive.setBoardStatus(null)')
+})
+
+test('session time and tokens are read per repo from Claude Code transcripts, and kept until a file changes', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'shipwatch-effort-'))
+  const at = (min: number): string => new Date(Date.UTC(2026, 9, 15, 12, min)).toISOString()
+  const line = (o: Record<string, unknown>): string => JSON.stringify(o)
+  const mine = join(root, 'C--Users-me-source-repos-My-App')
+  await mkdir(join(mine, 'session-1', 'subagents'), { recursive: true })
+  await writeFile(join(mine, 'session-1.jsonl'), [line({ type: 'user', timestamp: at(0) }), line({ type: 'assistant', timestamp: at(6), message: { id: 'a', usage: { input_tokens: 1, output_tokens: 9 } } })].join('\n'), 'utf8')
+  await writeFile(join(mine, 'session-1', 'subagents', 'agent-x.jsonl'), line({ type: 'assistant', timestamp: at(9), message: { id: 'b', usage: { output_tokens: 20 } } }), 'utf8')
+  // A folder that belongs to no repo is not read at all.
+  await mkdir(join(root, 'C--Users-me-AppData-Local-Temp-scratch'), { recursive: true })
+  await writeFile(join(root, 'C--Users-me-AppData-Local-Temp-scratch', 's.jsonl'), line({ type: 'user', timestamp: at(0) }), 'utf8')
+
+  const cache = join(root, 'effort.json')
+  const first = await readEffort(root, ['My_App', 'Other'], cache)
+  assert.deepEqual(Object.keys(first), ['My_App'])
+  // 0 to 6 and 6 to 9 minutes of one session, the sub-agent's reply in the same stretch.
+  assert.equal(first.My_App!.activeMs, 9 * 60_000)
+  assert.equal(first.My_App!.tokens, 30)
+  assert.equal(first.My_App!.sessions, 2)
+
+  // Unchanged files come from the cache: a damaged cached transcript proves the file was not parsed again.
+  const kept = JSON.parse(await readFile(cache, 'utf8')) as Record<string, { transcript: { times: number[] } }>
+  assert.equal(Object.keys(kept).length, 2)
+  for (const entry of Object.values(kept)) entry.transcript.times = [0]
+  await writeFile(cache, JSON.stringify(kept), 'utf8')
+  assert.equal((await readEffort(root, ['My_App'], cache)).My_App!.activeMs, 0)
+
+  // A changed file is read again.
+  await writeFile(join(mine, 'session-1.jsonl'), line({ type: 'user', timestamp: at(0) }) + '\n' + line({ type: 'user', timestamp: at(2) }) + '\n', 'utf8')
+  assert.equal((await readEffort(root, ['My_App'], cache)).My_App!.activeMs, 2 * 60_000)
+})
+
+test('no transcripts folder, or a damaged cache, gives an empty result rather than an error', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'shipwatch-effort-'))
+  assert.deepEqual(await readEffort(join(root, 'missing'), ['App'], join(root, 'effort.json')), {})
+  await writeFile(join(root, 'effort.json'), '{ nope', 'utf8')
+  assert.deepEqual(await readEffort(root, ['App'], join(root, 'effort.json')), {})
 })

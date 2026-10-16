@@ -9,7 +9,7 @@
 import { REPORT_CLIENT_JS } from './reportClient.generated'
 import { THEMES_CSS } from './themes.generated'
 import type { ApiLimits } from './budget'
-import type { Board, RecentPr, StatsBoard } from './types'
+import type { Board, RecentPr, RepoEffort, StatsBoard } from './types'
 
 /**
  * Where a part of the report stands when the page is made, for a host that fills it in after the page is up (the
@@ -32,6 +32,11 @@ export type ReportData = {
   statsStatus?: StatsStatus
   /** Set while the dashboard shown is a saved one being updated (or the update failed); a banner says so. */
   boardStatus?: BoardStatus
+  /**
+   * Session time and tokens per repo, from Claude Code's history on this computer, for the Builds tab. Absent when the
+   * host cannot read that history (a report opened by the Claude pane): the tab then shows what GitHub holds alone.
+   */
+  effort?: Record<string, RepoEffort>
   /** PRs opened in the last hour with where each stands, for the ship clock's rim; absent means not known. */
   recentPrs?: RecentPr[]
   /** When the dashboard is next read, epoch ms; `null` while it is being read now; absent when the page is not kept up to date (no countdown shown). */
@@ -78,11 +83,12 @@ table.compact{width:100%;min-width:340px}.fill{flex:1;min-width:340px}
 .step.done{color:var(--ready);border-color:var(--ready)}.step.running{color:var(--running);border-color:var(--running)}.step.failed{color:var(--fail);border-color:var(--fail)}
 .dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px}
 .chip{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:2px 4px 2px 10px}.x{font:inherit;background:none;border:0;color:var(--dim);cursor:pointer;padding:0 6px}
+.bar{height:4px;border-radius:2px;background:var(--line);margin-top:3px;min-width:56px}.bar>i{display:block;height:100%;border-radius:2px;background:var(--accent)}
 .svg{max-width:100%;overflow-x:auto}.svg svg{max-width:100%;height:auto}
 .banner{border:1px solid var(--line);background:var(--card);border-radius:8px;padding:10px 14px;margin:8px 0}.banner.bad{border-color:var(--fail)}.banner .part+.part{margin-top:10px;padding-top:10px;border-top:1px solid var(--line)}
 .meter{height:6px;border-radius:3px;background:var(--line);overflow:hidden;margin:8px 0}.meter>div{height:100%;width:0;background:var(--ready);transition:width .4s}
 .meter[data-indeterminate]>div{width:30%;animation:slide 1.2s ease-in-out infinite}@keyframes slide{0%{margin-left:-30%}100%{margin-left:100%}}
-.tabs{display:grid;grid-template-columns:1fr 1fr;margin:4px 0 14px;border-bottom:1px solid var(--line)}
+.tabs{display:grid;grid-template-columns:repeat(3,1fr);margin:4px 0 14px;border-bottom:1px solid var(--line)}
 .tab{font:inherit;text-align:center;padding:10px 12px;background:none;color:var(--dim);border:0;border-bottom:3px solid transparent;margin-bottom:-1px;cursor:pointer}
 .tab:hover{background:var(--card);color:var(--fg)}.tab.on{color:var(--fg);font-weight:600;border-bottom-color:var(--accent)}
 label.check{display:inline-flex;align-items:center;gap:4px;color:var(--dim);cursor:pointer;white-space:nowrap}label.check input{accent-color:var(--accent)}

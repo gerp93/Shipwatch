@@ -91,6 +91,36 @@ today, so "365 days" is the year up to now, not a calendar year:
   theme picker (the VisualAssault themes) and a click-through to look at one repo alone. It is the same code as the pane, in `src/core/report.ts`; its script is
   `src/report/client.ts`, bundled into `src/core/reportClient.generated.ts` by `node scripts/build-report.mjs`.
 
+### Builds
+
+The **Builds** tab sets every app side by side, to answer "how long did this take to get where it is?" against "what
+did it come to?". One row per repo, sortable, with a bar under the longest calendar spans and session times:
+
+| Column | Is |
+|---|---|
+| Started, Calendar | When the repo was created, and the calendar days from then to its last merged PR (both ends counted). |
+| Days worked | Days on which a PR merged. |
+| Session time | Time spent in Claude Code sessions on the repo. Events no more than 10 minutes apart count as continuous; a longer break is left out, and sessions open at once count their overlap once. |
+| Tokens | What the AI took in and wrote: new input, output and cache writes. Re-reading the cache is not counted. |
+| PRs, Commits, AI | Merged PRs, their commits (chore bots left out) and the share an AI is named on (see Stats). |
+| Net lines | Lines added less lines removed: roughly what is in the repo now (a rewrite counts again, so it is an estimate). |
+| Releases | Releases published. |
+| Lines/hour | Net lines per hour of session time (only with at least three minutes of it). |
+
+A click on a row opens that repo's stats. Calendar days and merged-PR numbers cover the repo's whole life whatever range
+Stats is set to.
+
+**Session time and tokens come from this computer.** Claude Code keeps a transcript of every session in
+`~/.claude/projects` (or under `CLAUDE_CONFIG_DIR`), one folder per working directory. The standalone app reads them
+(sessions and the sub-agents they started) and matches each folder to a repo by name: a folder whose name ends with the
+repo's (`...-repos-My-App` is `My_App`, case aside), or a worktree of it. A folder that matches no repo is not read.
+Parsed transcripts are kept in `effort.json` in the app's data folder until their file changes, so only the first read is
+slow (a few seconds for a few hundred megabytes). Nothing leaves the machine. The Claude pane's report has no way to read
+those files, so there the tab shows only what GitHub holds, and says so.
+
+What this does not know: time spent away from Claude Code (testing, reading, thinking), work in a clone that is named
+differently from its repo, transcripts you have deleted, and sessions run on other computers.
+
 Merged PRs never change, so each is fetched once and kept (in the plugin's store, across
 sessions); opening Stats again only asks for what is new. The first load of a long range can take
 a minute (all time, a few), and the pane says how far along it is.

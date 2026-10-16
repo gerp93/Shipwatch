@@ -32,6 +32,8 @@ Anything that has to be shown, toasted, or acted on is the host's business: the 
 | `stats.ts` | Who each commit is attributed to; totals for a range and a choice of who to compare; week buckets; which dates still need fetching. |
 | `statsFetch.ts` | The Stats queries (merged PRs with their commits, repos created). |
 | `statsService.ts` | `refreshStats`: bring the history up to date, fetching only what is new, and keep it in a `Store`. |
+| `effort.ts` | Turns Claude Code's session transcripts into session time and tokens per repo (`parseTranscript`, `foldEffort`), and matches a project folder to a repo (`repoForProject`). The host reads the files; this only reads their text. |
+| `profile.ts` | A repo's build profile: calendar days, days worked, PRs, commits, AI share, net lines, releases, and (when the host supplies it) session time and tokens. What the Builds tab shows. |
 | `charts.ts` | The Stats charts as SVG strings: donut, stacked bars, weekly columns, legend. |
 | `report.ts` | The full report: one self-contained HTML page (`renderReport`), plus how to open it. |
 | `reportClient.generated.ts` | GENERATED: the report page's script, bundled from `src/report/client.ts`. Run `node scripts/build-report.mjs` after changing it. |
