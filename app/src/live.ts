@@ -24,6 +24,9 @@ export const setBoardStatusScript = (status: BoardStatus | null): string => call
 /** The PRs opened in the last hour, for the clock's rim. */
 export const setRecentScript = (recent: RecentPr[]): string => call('setRecent', recent)
 
+/** When the dashboard is next read (epoch ms), or `null` while it is being read now; drives the countdown in the header. */
+export const setNextRefreshScript = (at: number | null): string => call('setNextRefresh', at)
+
 /** What is left of GitHub's allowances, for the readout in the header. */
 export const setApiScript = (api: ApiLimits): string => call('setApi', api)
 

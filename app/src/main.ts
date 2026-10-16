@@ -20,7 +20,7 @@ import { FileStore, nodeIO } from './adapters'
 import { HOUR_MS, RateLimited, collectDashboard, collectStats, loadSavedDashboard, saveDashboard, savedStats } from './collect'
 import type { CollectDeps, DashboardRead } from './collect'
 import { readConfig } from './config'
-import { setApiScript, setBoardScript, setBoardStatusScript, setRecentScript, setStatsScript, setStatusScript, throttled } from './live'
+import { setApiScript, setBoardScript, setBoardStatusScript, setNextRefreshScript, setRecentScript, setStatsScript, setStatusScript, throttled } from './live'
 import { closeFromReport, mergeFromReport } from './merge'
 import { errorPage, isSafeExternalUrl, loadingPage, progressFraction } from './pages'
 import { checkForUpdatesNow, setupAutoUpdater } from './updates'
@@ -151,6 +151,7 @@ async function showReport(
     boardStatus: what.boardStatus,
     recentPrs: what.recent,
     api: lastApi,
+    nextRefreshAt,
     logo: await readLogo(),
   }
   // The report is a real file, not a data: address, because years of history are too big for one.
@@ -162,9 +163,17 @@ async function showReport(
   win?.setTitle('Shipwatch')
 }
 
+/** When the dashboard is next read; `null` while it is being read now. What the header's countdown counts to. */
+let nextRefreshAt: number | null | undefined
+const setNextRefresh = (at: number | null): void => {
+  nextRefreshAt = at
+  toPage(setNextRefreshScript(at))
+}
+
 const scheduleRefresh = (ms: number): void => {
   if (refreshTimer) clearTimeout(refreshTimer)
   refreshTimer = setTimeout(() => void refresh(), ms)
+  setNextRefresh(Date.now() + ms)
 }
 
 /**
@@ -175,6 +184,7 @@ const scheduleRefresh = (ms: number): void => {
 async function refresh(): Promise<void> {
   if (isRefreshing || !win) return
   isRefreshing = true
+  setNextRefresh(null)
   try {
     const config = await loadConfig()
     const base = { io: nodeIO(), store: new FileStore(userFile('stats.json')), config, infraVerdicts }

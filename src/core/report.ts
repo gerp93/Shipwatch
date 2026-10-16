@@ -34,6 +34,8 @@ export type ReportData = {
   boardStatus?: BoardStatus
   /** PRs opened in the last hour with where each stands, for the ship clock's rim; absent means not known. */
   recentPrs?: RecentPr[]
+  /** When the dashboard is next read, epoch ms; `null` while it is being read now; absent when the page is not kept up to date (no countdown shown). */
+  nextRefreshAt?: number | null
   /** What is left of GitHub's allowances, for the readout in the header; absent means not known. */
   api?: ApiLimits
   /** A small image as a `data:` address, shown beside the title. Optional; the pane's report has none. */

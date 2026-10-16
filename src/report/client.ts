@@ -372,26 +372,54 @@ function statusBanner(): HTMLElement | null {
 // A small chip in the header: how many of GitHub's GraphQL points are left, so it is easy to see if something is
 // using them up. The app reads it from the endpoint that costs nothing, every half minute.
 
-/** The first reading of this hour's allowance seen by this page, to say how many points were used since. */
-let apiBaseline: { resetAt: number; remaining: number } | undefined
-
 function apiChipText(): { text: string; tone: string; title: string } | null {
   const g = data.api?.graphql
   if (!g) return null
-  if (!apiBaseline || apiBaseline.resetAt !== g.resetAt || g.remaining > apiBaseline.remaining) apiBaseline = { resetAt: g.resetAt, remaining: g.remaining }
-  const used = apiBaseline.remaining - g.remaining
   const share = g.limit > 0 ? g.remaining / g.limit : 1
   const reset = new Date(g.resetAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
   const core = data.api?.core
   return {
-    text: `GitHub API ${g.remaining.toLocaleString()} / ${g.limit.toLocaleString()}${used > 0 ? ` · −${used.toLocaleString()} since opened` : ''}`,
+    text: `GitHub API ~${g.remaining.toLocaleString()} / ${g.limit.toLocaleString()}`,
     tone: share < 0.1 ? 'critical' : share < 0.3 ? 'low' : 'ok',
     title:
-      `GraphQL points left this hour: ${g.remaining.toLocaleString()} of ${g.limit.toLocaleString()}, resetting at ${reset}.` +
+      `GraphQL points left this hour (an estimate, not exact): about ${g.remaining.toLocaleString()} of ${g.limit.toLocaleString()}, resetting at ${reset}.` +
       (core ? ` REST: ${core.remaining.toLocaleString()} of ${core.limit.toLocaleString()}.` : '') +
       ' Taken from the numbers GitHub returns with each read, so it uses no extra points.',
   }
 }
+
+// ---- Next refresh countdown --------------------------------------------------------------------------------
+// A chip in the header counting down to the app's next read of the dashboard (it can be a long wait when GitHub
+// asked to be left alone), and saying so while that read is happening. Only the app keeps it up to date.
+
+const clock = (ms: number): string => {
+  const s = Math.max(0, Math.ceil(ms / 1000))
+  const h = Math.floor(s / 3600)
+  const m = Math.floor((s % 3600) / 60)
+  const sec = String(s % 60).padStart(2, '0')
+  return h > 0 ? `${h}h ${String(m).padStart(2, '0')}m` : `${m}:${sec}`
+}
+
+function refreshChipText(): string | null {
+  const at = data.nextRefreshAt
+  if (at === undefined) return null
+  if (at === null || at <= Date.now()) return 'Refreshing...'
+  return `Next refresh in ${clock(at - Date.now())}`
+}
+
+function refreshChip(): HTMLElement | null {
+  const text = refreshChipText()
+  if (text === null) return null
+  const at = data.nextRefreshAt
+  const title = typeof at === 'number' ? `The dashboard is read again at ${new Date(at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}.` : 'Reading the dashboard from GitHub now.'
+  return el('span', { class: 'chip-api', id: 'next-refresh', title }, text)
+}
+
+setInterval(() => {
+  const chip = document.getElementById('next-refresh')
+  const text = refreshChipText()
+  if (chip && text !== null) chip.textContent = text
+}, 1000)
 
 function apiChip(): HTMLElement | null {
   const c = apiChipText()
@@ -624,6 +652,7 @@ function draw(): void {
       el('h1', {}, `${owner} · Shipwatch`),
       el('span', { class: 'dim' }, `generated ${new Date(data.generatedAt).toLocaleString()}`),
       el('span', { class: 'grow' }),
+      refreshChip(),
       apiChip(),
       el(
         'select',
@@ -698,6 +727,19 @@ window.addEventListener('resize', () => {
   /** The last hour's PRs; the clock picks them up on its next tick. */
   setRecent(recent: NonNullable<ReportData['recentPrs']>): void {
     data.recentPrs = recent
+  },
+  /** When the dashboard is next read (epoch ms), or null while it is being read; the countdown in the header follows it. */
+  setNextRefresh(at: number | null): void {
+    const had = data.nextRefreshAt !== undefined
+    data.nextRefreshAt = at
+    const chip = document.getElementById('next-refresh')
+    const text = refreshChipText()
+    if (chip && text !== null) {
+      chip.textContent = text
+      chip.title = typeof at === 'number' ? `The dashboard is read again at ${new Date(at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}.` : 'Reading the dashboard from GitHub now.'
+    } else if (!had) {
+      draw()
+    }
   },
   /** What is left of GitHub's allowances; only the chip in the header is repainted. */
   setApi(api: NonNullable<ReportData['api']>): void {
