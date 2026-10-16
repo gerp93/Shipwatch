@@ -125,7 +125,7 @@ const bridge = (
     shipwatch?: {
       mergePr: (repo: string, number: number) => Promise<{ ok: boolean; message: string }>
       closePr?: (repo: string, number: number) => Promise<{ ok: boolean; message: string }>
-      fetchStatsNow?: () => Promise<{ ok: boolean; message: string }>
+      fetchNow?: () => Promise<{ ok: boolean; message: string }>
     }
   }
 ).shipwatch
@@ -294,14 +294,15 @@ function commitsOverTime(agg: ReturnType<typeof aggregate>, sinceMs: number, col
 type Status = NonNullable<ReportData['statsStatus']>
 
 /**
- * "Fetch now" under a stopped stats load: the app reads the history right away, using the share of GitHub's
- * hourly allowance it normally keeps for other tools. Only the app can (a report opened in a browser has no way to).
+ * "Fetch now" under any notice that says Shipwatch will try again, or has paused, to keep within GitHub's allowance:
+ * the app goes ahead right away, using the share of the allowance it normally keeps for other tools. Only the app
+ * can (a report opened in a browser has no way to).
  */
 function fetchNowControl(): HTMLElement[] {
-  if (!bridge?.fetchStatsNow) return []
-  const ask = bridge.fetchStatsNow
+  if (!bridge?.fetchNow) return []
+  const ask = bridge.fetchNow
   const note = el('span', { class: 'dim' })
-  const btn = el('button', { class: 'btn', title: "Loads the rest now, using the part of GitHub's hourly allowance kept free for your other tools" }, 'Fetch now')
+  const btn = el('button', { class: 'btn', title: "Goes ahead now instead of waiting, using the part of GitHub's hourly allowance kept free for your other tools" }, 'Fetch now')
   btn.addEventListener('click', async () => {
     btn.setAttribute('disabled', '')
     note.textContent = ' Working...'
@@ -317,54 +318,53 @@ function fetchNowControl(): HTMLElement[] {
   return [el('div', { class: 'row' }, btn, note, el('span', { class: 'dim' }, 'Uses the allowance kept free for your other tools.'))]
 }
 
-/** Fills the notice for `st`: what is happening, a bar while it loads, and what is held so far. */
-function fillBanner(box: HTMLElement, st: Status, kind: 'stats' | 'board' = 'stats'): void {
-  box.className = st.state === 'error' ? 'banner bad' : 'banner'
-  if (kind === 'board') {
-    // The dashboard on screen is the one saved last time; this says so, and what is happening about it.
-    const saved = `Showing what was saved ${new Date(data.generatedAt).toLocaleString()}.`
-    if (st.state === 'error') {
-      box.replaceChildren(
-        el('strong', {}, 'Could not update from GitHub'),
-        el('div', {}, st.text),
-        el('div', { class: 'dim' }, `${saved} It will try again by itself.`),
-      )
-      return
-    }
-    const bar = el('div', { class: 'meter' }, el('div'))
-    bar.setAttribute('data-indeterminate', '1')
-    box.replaceChildren(el('strong', {}, 'Updating from GitHub...'), el('div', { class: 'dim' }, st.text || 'Starting...'), bar, el('div', { class: 'dim' }, saved))
-    return
-  }
-  const held = data.stats.prs.reduce((min, p) => (p.mergedAt < min ? p.mergedAt : min), '9999')
-  const heldNote = data.stats.prs.length > 0 ? `Showing what is saved so far (back to ${held.slice(0, 10)}).` : 'Nothing is saved yet.'
-  if (st.state === 'error') {
-    box.replaceChildren(
-      el('strong', {}, 'Stats are incomplete'),
-      el('div', {}, st.text),
-      el('div', { class: 'dim' }, `${heldNote} What has loaded is kept; choose View, Refresh to carry on from there.`),
-      ...fetchNowControl(),
-    )
-    return
-  }
-  const meter = el('div', { class: 'meter' }, el('div'))
-  if (typeof st.fraction === 'number') (meter.firstElementChild as HTMLElement).style.width = `${Math.round(st.fraction * 100)}%`
-  else meter.setAttribute('data-indeterminate', '1')
-  box.replaceChildren(
-    el('strong', {}, 'Loading your history from GitHub...'),
-    el('div', { class: 'dim' }, st.text || 'Starting...'),
-    meter,
-    el('div', { class: 'dim' }, `${heldNote} Longer ranges fill in as it goes; it only reads what it does not already have.`),
-    ...fetchNowControl(),
-  )
+/** One part of the notice: a title, what is happening, and a bar while it loads. */
+const part = (st: Status, title: string, ...rest: Child[]): HTMLElement => el('div', { class: 'part' }, el('strong', {}, title), el('div', st.state === 'error' ? {} : { class: 'dim' }, st.text || 'Starting...'), ...rest)
+
+const indeterminate = (): HTMLElement => {
+  const bar = el('div', { class: 'meter' }, el('div'))
+  bar.setAttribute('data-indeterminate', '1')
+  return bar
 }
 
-/** The notice under the header while the dashboard shown is a saved one being updated, or its update failed. */
-function boardBanner(): HTMLElement | null {
-  const st = data.boardStatus
-  if (!st) return null
-  const box = el('div', { id: 'board-banner' })
-  fillBanner(box, st, 'board')
+/**
+ * The one notice under the header, on every tab: what is happening with the dashboard update and with the stats
+ * history, in one box, with one "Fetch now" that goes ahead with whatever is waiting.
+ */
+function fillStatusBanner(box: HTMLElement): void {
+  const board = data.boardStatus
+  const st = data.statsStatus
+  box.className = board?.state === 'error' || st?.state === 'error' ? 'banner bad' : 'banner'
+  const parts: HTMLElement[] = []
+  if (board) {
+    // The dashboard on screen is the one saved last time; this says so, and what is happening about it.
+    const saved = `Showing what was saved ${new Date(data.generatedAt).toLocaleString()}.`
+    parts.push(
+      board.state === 'error'
+        ? part(board, 'Could not update from GitHub', el('div', { class: 'dim' }, `${saved} It will try again by itself.`))
+        : part({ ...board, text: board.text }, 'Updating from GitHub...', indeterminate(), el('div', { class: 'dim' }, saved)),
+    )
+  }
+  if (st) {
+    const held = data.stats.prs.reduce((min, p) => (p.mergedAt < min ? p.mergedAt : min), '9999')
+    const heldNote = data.stats.prs.length > 0 ? `Showing what is saved so far (back to ${held.slice(0, 10)}).` : 'Nothing is saved yet.'
+    if (st.state === 'error') {
+      parts.push(part(st, 'Stats are incomplete', el('div', { class: 'dim' }, `${heldNote} What has loaded is kept; it carries on from there.`)))
+    } else {
+      const meter = el('div', { class: 'meter' }, el('div'))
+      if (typeof st.fraction === 'number') (meter.firstElementChild as HTMLElement).style.width = `${Math.round(st.fraction * 100)}%`
+      else meter.setAttribute('data-indeterminate', '1')
+      parts.push(part(st, 'Loading your history from GitHub...', meter, el('div', { class: 'dim' }, `${heldNote} Longer ranges fill in as it goes; it only reads what it does not already have.`)))
+    }
+  }
+  box.replaceChildren(...parts, ...fetchNowControl())
+}
+
+/** The notice under the header while the dashboard update or the stats load is running, waiting or has failed. */
+function statusBanner(): HTMLElement | null {
+  if (!data.boardStatus && !data.statsStatus) return null
+  const box = el('div', { id: 'status-banner' })
+  fillStatusBanner(box)
   return box
 }
 
@@ -397,14 +397,6 @@ function apiChip(): HTMLElement | null {
   const c = apiChipText()
   if (!c) return null
   return el('span', { class: `chip-api ${c.tone}`, id: 'api-chip', title: c.title }, c.text)
-}
-
-function statsBanner(): HTMLElement | null {
-  const st = data.statsStatus
-  if (!st) return null
-  const box = el('div', { id: 'stats-banner' })
-  fillBanner(box, st)
-  return box
 }
 
 function stats(): HTMLElement {
@@ -441,7 +433,6 @@ function stats(): HTMLElement {
   return el(
     'section',
     {},
-    statsBanner(),
     el(
       'div',
       { class: 'row wrap' },
@@ -648,7 +639,7 @@ function draw(): void {
       tab('Dashboard', state.view === 'dashboard', () => ((state.view = 'dashboard'), draw())),
       tab(data.statsStatus?.state === 'loading' ? 'Stats (loading...)' : 'Stats', state.view === 'stats', () => ((state.view = 'stats'), draw())),
     ),
-    ...(data.boardStatus ? [boardBanner()!] : []),
+    ...(data.boardStatus || data.statsStatus ? [statusBanner()!] : []),
     state.view === 'dashboard' ? dashboard() : stats(),
   )
 }
@@ -700,8 +691,8 @@ window.addEventListener('resize', () => {
   setBoardStatus(status: ReportData['boardStatus'] | null): void {
     const before = data.boardStatus?.state
     data.boardStatus = status ?? undefined
-    const box = document.getElementById('board-banner')
-    if (status && box && before === status.state) fillBanner(box, status, 'board')
+    const box = document.getElementById('status-banner')
+    if (box && (data.boardStatus || data.statsStatus) && before === status?.state) fillStatusBanner(box)
     else draw()
   },
   /** The last hour's PRs; the clock picks them up on its next tick. */
@@ -724,8 +715,8 @@ window.addEventListener('resize', () => {
   setStatus(status: ReportData['statsStatus'] | null): void {
     const before = data.statsStatus?.state
     data.statsStatus = status ?? undefined
-    const box = document.getElementById('stats-banner')
-    if (status && box && before === status.state) fillBanner(box, status)
+    const box = document.getElementById('status-banner')
+    if (box && (data.boardStatus || data.statsStatus) && before === status?.state) fillStatusBanner(box)
     else draw()
   },
 }

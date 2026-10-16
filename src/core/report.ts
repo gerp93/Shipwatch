@@ -77,7 +77,7 @@ table.compact{width:100%;min-width:340px}.fill{flex:1;min-width:340px}
 .dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px}
 .chip{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:2px 4px 2px 10px}.x{font:inherit;background:none;border:0;color:var(--dim);cursor:pointer;padding:0 6px}
 .svg{max-width:100%;overflow-x:auto}.svg svg{max-width:100%;height:auto}
-.banner{border:1px solid var(--line);background:var(--card);border-radius:8px;padding:10px 14px;margin:8px 0}.banner.bad{border-color:var(--fail)}
+.banner{border:1px solid var(--line);background:var(--card);border-radius:8px;padding:10px 14px;margin:8px 0}.banner.bad{border-color:var(--fail)}.banner .part+.part{margin-top:10px;padding-top:10px;border-top:1px solid var(--line)}
 .meter{height:6px;border-radius:3px;background:var(--line);overflow:hidden;margin:8px 0}.meter>div{height:100%;width:0;background:var(--ready);transition:width .4s}
 .meter[data-indeterminate]>div{width:30%;animation:slide 1.2s ease-in-out infinite}@keyframes slide{0%{margin-left:-30%}100%{margin-left:100%}}
 .tabs{display:grid;grid-template-columns:1fr 1fr;margin:4px 0 14px;border-bottom:1px solid var(--line)}

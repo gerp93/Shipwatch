@@ -79,7 +79,7 @@ const pausableWait = (ms: number): Promise<void> =>
   })
 
 /** A load that finished a moment ago is not repeated just because the dashboard was refreshed. */
-const shouldLoadStats = (): boolean => Date.now() - statsLoadedAt >= STATS_FRESH_MS
+const shouldLoadStats = (): boolean => spendReserveNow || Date.now() - statsLoadedAt >= STATS_FRESH_MS
 
 /** Runs a line of script in the report on screen, if there is one; the page ignores it when it is not ready yet. */
 const toPage = (script: string): void => void win?.webContents.executeJavaScript(script).catch(() => {})
@@ -231,6 +231,8 @@ async function refresh(): Promise<void> {
     await showHtml(errorPage(err instanceof Error ? err.message : String(err))).catch(() => {})
   } finally {
     isRefreshing = false
+    // "Fetch now" applies to the attempt it started; it does not stay armed for a later, automatic one.
+    if (!isLoadingStats) spendReserveNow = false
   }
 }
 
@@ -336,27 +338,23 @@ function setupMerge(): void {
 }
 
 /**
- * The Stats banner's "Fetch now": reads the stats history right away, spending the share of GitHub's hourly
- * allowance that is normally kept for other tools. Only the report may ask; it needs a dashboard read to have
- * happened (that is what the access comes from).
+ * The banners' "Fetch now": do what is waiting to be retried right away. A dashboard update that GitHub refused is
+ * tried again now instead of at the reset time, a stats load paused to keep the allowance reserve goes on at once,
+ * and the stats load that follows spends that reserve. Only the report may ask.
  */
 function setupFetchNow(): void {
-  ipcMain.handle('shipwatch:fetch-stats-now', async event => {
+  ipcMain.handle('shipwatch:fetch-now', async event => {
     const isReport = event.senderFrame?.url === pathToFileURL(userFile('report.html')).href
     if (!isReport || !win) return { ok: false, message: 'Only the report can ask for this.' }
     spendReserveNow = true
     // A load already under way (paused to keep the reserve) goes on at once instead of waiting out the pause.
-    if (isLoadingStats) {
-      endPause?.()
-      return { ok: true, message: 'Going on now, without pausing.' }
-    }
-    if (!lastRead) {
-      spendReserveNow = false
-      return { ok: false, message: 'Not connected to GitHub yet; try again in a moment.' }
-    }
-    const config = await loadConfig()
-    void loadStatsInBackground({ io: nodeIO(), store: new FileStore(userFile('stats.json')), config, infraVerdicts, now: Date.now() }, lastRead)
-    return { ok: true, message: 'Loading now.' }
+    endPause?.()
+    if (isRefreshing) return { ok: true, message: isLoadingStats ? 'Going on now, without pausing.' : 'Already trying; going on without pausing.' }
+    if (isLoadingStats) return { ok: true, message: 'Going on now, without pausing.' }
+    // Not waiting for the retry time GitHub gave: ask again now (a refresh also starts the stats load when it is due).
+    if (refreshTimer) clearTimeout(refreshTimer)
+    void refresh()
+    return { ok: true, message: 'Trying now.' }
   })
 }
 
