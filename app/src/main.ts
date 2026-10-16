@@ -64,6 +64,20 @@ async function loadConfig(): Promise<ReturnType<typeof readConfig>> {
 let isLoadingStats = false
 let statsStatus: StatsStatus | null = null
 let statsLoadedAt = 0
+/** Set by the banner's "Fetch now": go on past the allowance reserve, and cut short a pause already under way. */
+let spendReserveNow = false
+let endPause: (() => void) | undefined
+/** A timer the "Fetch now" button can end early. */
+const pausableWait = (ms: number): Promise<void> =>
+  new Promise(resolve => {
+    const done = (): void => {
+      clearTimeout(timer)
+      if (endPause === done) endPause = undefined
+      resolve()
+    }
+    const timer = setTimeout(done, ms)
+    endPause = done
+  })
 
 /** A load that finished a moment ago is not repeated just because the dashboard was refreshed. */
 const shouldLoadStats = (): boolean => Date.now() - statsLoadedAt >= STATS_FRESH_MS
@@ -86,6 +100,8 @@ async function loadStatsInBackground(deps: CollectDeps, read: DashboardRead): Pr
     const { stats, error } = await collectStats(
       {
         ...deps,
+        spendReserve: () => spendReserveNow,
+        wait: pausableWait,
         onProgress: text => {
           statsStatus = { state: 'loading', text, fraction: progressFraction(text) }
           toPage(setStatusScript(statsStatus))
@@ -105,6 +121,7 @@ async function loadStatsInBackground(deps: CollectDeps, read: DashboardRead): Pr
     toPage(setStatusScript(statsStatus))
   } finally {
     isLoadingStats = false
+    spendReserveNow = false
   }
 }
 
@@ -323,10 +340,18 @@ function setupFetchNow(): void {
   ipcMain.handle('shipwatch:fetch-stats-now', async event => {
     const isReport = event.senderFrame?.url === pathToFileURL(userFile('report.html')).href
     if (!isReport || !win) return { ok: false, message: 'Only the report can ask for this.' }
-    if (isLoadingStats) return { ok: true, message: 'Already loading.' }
-    if (!lastRead) return { ok: false, message: 'Not connected to GitHub yet; try again in a moment.' }
+    spendReserveNow = true
+    // A load already under way (paused to keep the reserve) goes on at once instead of waiting out the pause.
+    if (isLoadingStats) {
+      endPause?.()
+      return { ok: true, message: 'Going on now, without pausing.' }
+    }
+    if (!lastRead) {
+      spendReserveNow = false
+      return { ok: false, message: 'Not connected to GitHub yet; try again in a moment.' }
+    }
     const config = await loadConfig()
-    void loadStatsInBackground({ io: nodeIO(), store: new FileStore(userFile('stats.json')), config, infraVerdicts, now: Date.now(), spendReserve: true }, lastRead)
+    void loadStatsInBackground({ io: nodeIO(), store: new FileStore(userFile('stats.json')), config, infraVerdicts, now: Date.now() }, lastRead)
     return { ok: true, message: 'Loading now.' }
   })
 }
