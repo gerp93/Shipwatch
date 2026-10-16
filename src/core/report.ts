@@ -34,7 +34,7 @@ export type ReportData = {
   boardStatus?: BoardStatus
   /**
    * Session time and tokens per repo, from Claude Code's history on this computer, for the Builds tab. Absent when the
-   * host cannot read that history (a report opened by the Claude pane): the tab then shows what GitHub holds alone.
+   * host cannot read that history, or finds none for these repos: the tab then shows what GitHub holds alone.
    */
   effort?: Record<string, RepoEffort>
   /** PRs opened in the last hour with where each stands, for the ship clock's rim; absent means not known. */

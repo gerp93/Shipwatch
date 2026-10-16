@@ -103,3 +103,157 @@ export const foldEffort = (items: ReadonlyArray<{ repo: string; transcript: Tran
   }
   return out
 }
+
+// ---- Reading the folder -------------------------------------------------------------------------------------
+// The core has no file access, so the walk below goes through `EffortHost`, which each outlet supplies: the app from
+// `node:fs`, the Claude pane from the engine's `$.fs` and `$.process`.
+
+/** One entry of a folder. Files carry their size (bytes) and modified time; both are 0 for anything else. */
+export type EffortEntry = { name: string; kind: 'file' | 'dir' | 'other'; size: number; mtimeMs: number }
+
+export type EffortHost = {
+  /** The entries of a folder; empty when it is missing or cannot be read. */
+  list: (path: string) => Promise<EffortEntry[]>
+  /**
+   * The text of a transcript, or of a reduction of it that `parseTranscript` reads the same (see `SLIM_TRANSCRIPT_SCRIPT`).
+   * Undefined when it cannot be read; that file is then left out and counted as skipped.
+   */
+  read: (path: string, size: number) => Promise<string | undefined>
+}
+
+/** A transcript already read, with the size and time of the file it came from; it is read again only if either changed. */
+export type KeptTranscript = { size: number; mtimeMs: number; transcript: Transcript }
+
+export type EffortRead = {
+  effort: Record<string, RepoEffort>
+  /** What was read, keyed by file, for the host to keep and pass back as `before`. */
+  cache: Record<string, KeptTranscript>
+  /** Transcript files that could not be read, so the numbers are short by their share. */
+  skipped: number
+}
+
+type TranscriptFile = { path: string; size: number; mtimeMs: number }
+
+const READ_AT_ONCE = 6
+
+/** The transcript files in a project folder: its sessions, and the sub-agents each one started. */
+const transcriptFiles = async (host: EffortHost, folder: string): Promise<TranscriptFile[]> => {
+  const out: TranscriptFile[] = []
+  for (const entry of await host.list(folder)) {
+    if (entry.kind === 'file' && entry.name.endsWith('.jsonl')) out.push({ path: `${folder}/${entry.name}`, size: entry.size, mtimeMs: entry.mtimeMs })
+    else if (entry.kind === 'dir') {
+      const sub = `${folder}/${entry.name}/subagents`
+      for (const f of await host.list(sub)) if (f.kind === 'file' && f.name.endsWith('.jsonl')) out.push({ path: `${sub}/${f.name}`, size: f.size, mtimeMs: f.mtimeMs })
+    }
+  }
+  return out
+}
+
+/**
+ * Session time and tokens per repo, from the transcripts folder `dir`. A project folder is matched to a repo by name
+ * (see `repoForProject`); folders that match none are not read. A file whose size and time match its entry in `before`
+ * is not read again. Repos with no transcripts are left out.
+ */
+export const collectEffort = async (host: EffortHost, dir: string, repoNames: readonly string[], before: Record<string, KeptTranscript> = {}): Promise<EffortRead> => {
+  const files: Array<TranscriptFile & { repo: string }> = []
+  for (const folder of await host.list(dir)) {
+    if (folder.kind !== 'dir') continue
+    const repo = repoForProject(folder.name, repoNames)
+    if (!repo) continue
+    for (const f of await transcriptFiles(host, `${dir}/${folder.name}`)) files.push({ repo, ...f })
+  }
+  const cache: Record<string, KeptTranscript> = {}
+  const items: Array<{ repo: string; transcript: Transcript }> = []
+  let skipped = 0
+  const readOne = async (file: TranscriptFile & { repo: string }): Promise<void> => {
+    const kept = before[file.path]
+    let transcript: Transcript | undefined = kept && kept.size === file.size && kept.mtimeMs === file.mtimeMs ? kept.transcript : undefined
+    if (!transcript) {
+      try {
+        const text = await host.read(file.path, file.size)
+        if (text !== undefined) transcript = parseTranscript(text)
+      } catch {
+        // Counted as skipped below.
+      }
+    }
+    if (!transcript) {
+      skipped++
+      return
+    }
+    cache[file.path] = { size: file.size, mtimeMs: file.mtimeMs, transcript }
+    items.push({ repo: file.repo, transcript })
+  }
+  for (let i = 0; i < files.length; i += READ_AT_ONCE) await Promise.all(files.slice(i, i + READ_AT_ONCE).map(readOne))
+  return { effort: foldEffort(items), cache, skipped }
+}
+
+/** Where Claude Code keeps its transcripts: under `CLAUDE_CONFIG_DIR` when that is set, else `~/.claude`. Undefined when the home folder is not known. */
+export const transcriptsDirFor = (env: { CLAUDE_CONFIG_DIR?: string; HOME?: string; USERPROFILE?: string }): string | undefined => {
+  const home = env.HOME || env.USERPROFILE
+  const config = env.CLAUDE_CONFIG_DIR || (home ? `${home.replace(/[\\/]+$/, '')}/.claude` : undefined)
+  return config ? `${config.replace(/[\\/]+$/, '')}/projects` : undefined
+}
+
+/**
+ * A one-line Node program (`node -e`, the transcript's path as the argument) that boils a transcript down to what
+ * `parseTranscript` needs: one `{"timestamp"}` line per second with an event in it, then one line per reply with its
+ * largest token count. For a host that cannot read a big file whole (the engine's reads stop at 4 MiB); the output is
+ * a few percent of the input. It has no double quotes, newlines or shell characters, so it survives being an argument.
+ */
+export const SLIM_TRANSCRIPT_SCRIPT = [
+  `const rl=require('readline').createInterface({input:require('fs').createReadStream(process.argv[1])})`,
+  `const sec=new Set(),rep=new Map(),n=v=>typeof v==='number'&&isFinite(v)?v:0`,
+  `rl.on('line',l=>{if(!l.includes('\\x22timestamp\\x22'))return`,
+  `let e;try{e=JSON.parse(l)}catch(x){return}`,
+  `const t=Date.parse(e.timestamp);if(!isFinite(t))return`,
+  `sec.add(Math.floor(t/1000))`,
+  `const m=e.message,u=e.type==='assistant'&&m&&typeof m==='object'&&m.usage;if(!u||typeof u!=='object')return`,
+  `const k=n(u.input_tokens)+n(u.output_tokens)+n(u.cache_creation_input_tokens),id=typeof m.id==='string'?m.id:typeof e.requestId==='string'?e.requestId:''`,
+  `if(k>0&&id){const p=rep.get(id);if(!p||k>p[1])rep.set(id,[e.timestamp,k])}})`,
+  `rl.on('close',()=>{const o=[];for(const s of sec)o.push(JSON.stringify({timestamp:new Date(s*1000).toISOString()}))`,
+  `for(const [id,p] of rep)o.push(JSON.stringify({type:'assistant',timestamp:p[0],message:{id:id,usage:{output_tokens:p[1]}}}))`,
+  `process.stdout.write(o.join('\\n'))})`,
+].join(';')
+
+/** What the engine's file reads stop at (4 MiB), with a little to spare. */
+export const ENGINE_READ_LIMIT = 4 * 1024 * 1024 - 1024
+
+/** The engine's calls the pane's host is built from: `$.fs.list`, `$.fs.read` and `$.process.run` (see `hooks/register.tsx`). */
+export type EffortEngine = {
+  list: (path: string) => Promise<EffortEntry[]>
+  read: (path: string) => Promise<string>
+  run: (argv: readonly string[], init: { timeoutMs: number }) => Promise<{ exitCode: number; stdout: string; isStdoutTruncated?: boolean }>
+}
+
+/**
+ * An `EffortHost` over the engine. A transcript is reduced by Node when Node can be run (fast, and no size limit); else,
+ * or when that fails, it is read whole if it fits under the engine's limit, and left out (counted as skipped) if not.
+ */
+export const engineEffortHost = (engine: EffortEngine): EffortHost => {
+  let canRunNode = true
+  return {
+    list: async path => {
+      try {
+        return await engine.list(path)
+      } catch {
+        return []
+      }
+    },
+    read: async (path, size) => {
+      if (canRunNode) {
+        try {
+          const r = await engine.run(['node', '-e', SLIM_TRANSCRIPT_SCRIPT, path], { timeoutMs: 120_000 })
+          if (r.exitCode === 0 && !r.isStdoutTruncated) return r.stdout
+        } catch {
+          canRunNode = false
+        }
+      }
+      if (size > ENGINE_READ_LIMIT) return undefined
+      try {
+        return await engine.read(path)
+      } catch {
+        return undefined
+      }
+    },
+  }
+}

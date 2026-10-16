@@ -702,7 +702,7 @@ function builds(): HTMLElement {
       : el(
           'p',
           { class: 'dim' },
-          'Session time and tokens come from Claude Code’s history on this computer, which only the Shipwatch app reads; this view shows what GitHub holds.',
+          'Session time and tokens come from Claude Code’s history on this computer, and none was found for these repos; this view shows what GitHub holds.',
         ),
     list.length === 0
       ? el('p', { class: 'dim' }, 'Nothing merged yet, so there is nothing to profile.')

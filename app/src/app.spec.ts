@@ -2,8 +2,11 @@ import assert from 'node:assert/strict'
 import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { execFile } from 'node:child_process'
+import { promisify } from 'node:util'
 import { test } from 'node:test'
 
+import { SLIM_TRANSCRIPT_SCRIPT, parseTranscript } from '../../src/core/effort'
 import type { IO } from '../../src/core/ports'
 
 import { FileStore, nodeIO } from './adapters'
@@ -340,4 +343,31 @@ test('no transcripts folder, or a damaged cache, gives an empty result rather th
   assert.deepEqual(await readEffort(join(root, 'missing'), ['App'], join(root, 'effort.json')), {})
   await writeFile(join(root, 'effort.json'), '{ nope', 'utf8')
   assert.deepEqual(await readEffort(root, ['App'], join(root, 'effort.json')), {})
+})
+
+test('the slimming script the Claude pane runs through Node gives the same numbers as parsing the whole transcript', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'shipwatch-slim-'))
+  const at = (min: number, sec = 0): string => new Date(Date.UTC(2026, 9, 15, 12, min, sec)).toISOString()
+  const line = (o: Record<string, unknown>): string => JSON.stringify(o)
+  const reply = (id: string, min: number, output: number): string =>
+    line({ type: 'assistant', timestamp: at(min), message: { id, usage: { input_tokens: 2, output_tokens: output, cache_creation_input_tokens: 5, cache_read_input_tokens: 9000 } } })
+  const text = [
+    line({ type: 'user', timestamp: at(0) }),
+    line({ type: 'user', timestamp: at(0, 0) }),
+    reply('m1', 1, 10),
+    reply('m1', 1, 400),
+    reply('m1', 1, 250),
+    line({ type: 'summary' }),
+    'not json but "timestamp"',
+    reply('m2', 4, 7),
+    line({ requestId: 'r1', type: 'assistant', timestamp: at(5), message: { usage: { output_tokens: 3 } } }),
+  ].join('\n')
+  const path = join(root, 's.jsonl')
+  await writeFile(path, text, 'utf8')
+  const { stdout } = await promisify(execFile)(process.execPath, ['-e', SLIM_TRANSCRIPT_SCRIPT, path])
+  const whole = parseTranscript(text)
+  const slim = parseTranscript(stdout)
+  assert.deepEqual(slim.times, whole.times)
+  assert.deepEqual([...slim.usage].sort(), [...whole.usage].sort())
+  assert.ok(stdout.length < text.length)
 })
