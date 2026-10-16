@@ -6,7 +6,9 @@ import type { RawMergedPr } from './stats'
 
 // Merged PRs, with the identity and size of each commit. GitHub's search returns at most 1000 results
 // for one query, so callers ask for a month at a time (see windowsBetween in stats.ts). 25 PRs a page
-// keeps each answer small: every PR carries up to 100 commits.
+// keeps each answer small: every PR carries up to 100 commits. Each commit's co-authors are NOT asked for as a
+// nested list (`authors`): that one nested connection made a page cost about 25 GraphQL points instead of about 1,
+// and the `Co-Authored-By` trailers it reflects are read from the commit message anyway (see `actorOf`).
 const MERGED_QUERY = `
 query($q:String!,$after:String){
   rateLimit{ cost remaining limit resetAt }
@@ -23,7 +25,6 @@ query($q:String!,$after:String){
               message additions deletions
               parents{ totalCount }
               author{ name email user{ login } }
-              authors(first:5){ nodes{ name email user{ login } } }
             }
           }
         }

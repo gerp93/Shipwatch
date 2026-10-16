@@ -26,7 +26,7 @@ release. With several apps going at once it answers "which of these is waiting o
 - **Auto-fix (opt-in)**: a broken default-branch build can wake an idle session with a
   fix request, so a failure after an auto-merge doesn't wait for you to notice.
 - **A ship clock** on the report and in the standalone app: a real analog clock (the hands show the time) whose rim shows the last hour of work. A dot sits at the minute each PR was opened, for the last 60 minutes, coloured by where it stands now (merged, open with checks passing / running / failing, draft, closed), with a list beside it and a one-line count ("7 PRs opened in the last hour: 4 merged, 2 open (1 failing), 1 closed"). A dot drops off when its hour is up. The app re-reads the hour every minute.
-- **A GitHub points readout** in the report's header: how many of GitHub's GraphQL points are left this hour (and how many were used since the page opened), turning amber under 30% and red under 10%. The app reads it every 30 seconds from the endpoint GitHub does not count.
+- **A GitHub points readout** in the report's header: how many of GitHub's GraphQL points are left this hour (and how many were used since the page opened), turning amber under 30% and red under 10%. It is taken from the `rateLimit` numbers GitHub returns with each read (the dashboard's, and the last hour's every minute), so it costs nothing extra. GitHub's separate REST rate-limit page is not used for it: it has reported a different count and reset time from GraphQL's own (4,818 left while GraphQL said 0).
 - **Adaptive polling**: every 20 s while something builds, every 60 s otherwise.
   Press `r` in the pane to refresh now.
 
@@ -46,7 +46,7 @@ running, then ready). With none it follows the default branch.
 the stepper and never turns a repo red, and its checks are not announced. In the report and the app they are also
 left out by default: repos whose only open PRs are set aside are hidden, such PRs are not listed against other repos,
 and they do not appear on the clock. Tick **Include drafts** (remembered between visits) to see them; the box says how
-many draft-only repos are hidden. The app's Merge button refuses a PR titled "do not merge" and hides it for drafts. In
+many draft-only repos are hidden. The app's Merge button refuses a PR titled "do not merge" and hides it for drafts. Every open PR in the app also has a **Close** button (closed without merging, reopenable on GitHub), which asks first like Merge does. In
 the terminal pane a repo with only set-aside PRs shows its default branch's state if that needs attention, and otherwise
 sits below the real work as "draft".
 
@@ -195,8 +195,9 @@ The last two run in CI too (`.github/workflows/checks.yml`).
   as you: every open Claude session running Shipwatch (each polls on its own), the `gh` CLI, the app. Shipwatch reads
   how much is left after each poll, stretches the wait as it runs down, and never spends the last 30% (kept for your
   other tools and `gh pr create`); the pane says so ("Polling every N s...", "Paused until ..."). If GitHub refuses
-  anyway the message says what GitHub's own rate-limit status shows (points left and the reset time), and Shipwatch tries again at that
-  reset time; it makes up no time of its own. Each extra open session still costs its own polls.
+  anyway the message says the limit was hit and when GitHub says it resets, and Shipwatch tries again at that time; it
+  makes up no time of its own and does not quote the points (GitHub's two reports of them can disagree). Each extra
+  open session still costs its own polls.
 
 ## Standards
 

@@ -8,7 +8,7 @@ import { barsSvg, chartColor, donutSvg, legendSvg, weeksSvg } from '../src/core/
 import type { InfraVerdicts } from '../src/core/boardService'
 import { adviseOnLimit, isRateLimit, pace, throttleNote } from '../src/core/budget'
 import type { ApiLimits, Budget } from '../src/core/budget'
-import { connect, fetchApiLimits, resolveOwner } from '../src/core/github'
+import { connect, fetchLimitStatus, resolveOwner } from '../src/core/github'
 import { fetchRecentPrs } from '../src/core/recent'
 import { openArgv, renderReport } from '../src/core/report'
 import { headlineLink, safeHref, stepLinks } from '../src/core/links'
@@ -183,7 +183,7 @@ async function refresh($: any): Promise<number> {
     delay = ERROR_POLL_MS
     if (isRateLimit(message)) {
       // Say which limit it was and wait for it: a burst limit clears in a minute or two, the hourly one at its reset.
-      const limit = reached ? (await fetchApiLimits(io, reached))?.graphql : undefined
+      const limit = reached ? await fetchLimitStatus(io, reached) : undefined
       const at: number = await $.clock.now()
       const advice = adviseOnLimit(limit, at)
       message = advice.message
@@ -278,7 +278,8 @@ async function openReport($: any): Promise<void> {
       } catch {
         // No clock rim in this report.
       }
-      api = await fetchApiLimits(io, access)
+      // The points left, as GraphQL reported them with the last dashboard read.
+      api = b.points ? { graphql: b.points } : undefined
     }
     const html = renderReport({
       generatedAt,

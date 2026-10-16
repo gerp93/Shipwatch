@@ -54,23 +54,18 @@ test('the throttle note says what the pacing is doing and why', () => {
   expect(throttleNote(spent, pace(spent, NOW, 20_000), at)).toContain('Paused until T+60m')
 })
 
-test('a refusal is explained with what GitHub reports, and retried at the reset time it gives', () => {
+test('a refusal says only that the limit was hit and when GitHub says it resets, and retries then', () => {
   const at = (ms: number) => `T+${Math.round((ms - NOW) / 60_000)}m`
 
-  // Refused with points left: the same thing as any other refusal. It waits for the reset GitHub reports.
   const refused = adviseOnLimit({ remaining: 4_835, limit: 5_000, resetAt: NOW + HOUR }, NOW, at)
   expect(refused.retryInMs).toBe(HOUR + 5_000)
-  expect(refused.message).toContain('GitHub refused the request with a rate-limit error')
-  expect(refused.message).toContain('shows 4,835 of 5,000 points left and a reset at T+60m; Shipwatch will try again then')
-  // Nothing Shipwatch made up: no invented kind of limit, no delay of its own.
-  for (const guess of ['burst', 'briefly', 'short-term', 'usually', 'does not say', '90 s']) expect(refused.message).not.toContain(guess)
-  expect(refused.giveUp).toContain('Choose Refresh after that')
-  expect(refused.giveUp).not.toContain('will try again')
+  expect(refused.message).toBe('GitHub refused the request with a rate-limit error. GitHub says it resets at T+60m; Shipwatch will try again then.')
+  // The points are not stated: GitHub's two reports of them can disagree, and the refusal already says it was hit.
+  for (const left of ['points', '4,835', 'burst', 'briefly', 'short-term', 'usually', '90 s']) expect(refused.message).not.toContain(left)
+  expect(refused.giveUp).toBe('GitHub refused the request with a rate-limit error. GitHub says it resets at T+60m. Choose Refresh after that to try again.')
 
-  // Allowance spent: the same, with nothing left.
-  const spent = adviseOnLimit({ remaining: 0, limit: 5_000, resetAt: NOW + 8 * 60_000 }, NOW, at)
-  expect(spent.retryInMs).toBe(8 * 60_000 + 5_000)
-  expect(spent.message).toContain('0 of 5,000 points left and a reset at T+8m')
+  // The same whether the status shows points left or none.
+  expect(adviseOnLimit({ remaining: 0, limit: 5_000, resetAt: NOW + 8 * 60_000 }, NOW, at).retryInMs).toBe(8 * 60_000 + 5_000)
 
   // A reset time already past is no help: ask again in a minute, and say that.
   const passed = adviseOnLimit({ remaining: 0, limit: 5_000, resetAt: NOW - 1 }, NOW, at)
@@ -81,7 +76,6 @@ test('a refusal is explained with what GitHub reports, and retried at the reset 
   const unknown = adviseOnLimit(undefined, NOW, at)
   expect(unknown.retryInMs).toBe(60_000)
   expect(unknown.message).toContain("could not read GitHub's rate-limit status")
-  expect(unknown.message).not.toContain('points left')
 })
 
 test('the readout is calm above 30%, low under it and urgent under 10%', () => {

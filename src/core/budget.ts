@@ -58,7 +58,7 @@ export const limitTone = (l: ApiLimit): 'ok' | 'low' | 'critical' => {
 }
 
 export type LimitAdvice = {
-  /** What to tell the person while Shipwatch waits: what GitHub reports, and when Shipwatch will try again. */
+  /** What to tell the person while Shipwatch waits: that the limit was hit, when GitHub says it resets, and that it will try then. */
   message: string
   /** What to tell the person once Shipwatch has stopped trying. */
   giveUp: string
@@ -69,9 +69,9 @@ export type LimitAdvice = {
 const count = (n: number): string => n.toLocaleString('en-US')
 
 /**
- * What to say and do when GitHub refuses a request for rate limiting, from GitHub's own status for that limit
- * (the free `rate_limit` endpoint: points left, the total, and when it resets). It waits for the reset time
- * GitHub reports and says so; it does not guess a time of its own. The points are shown as GitHub reports them.
+ * What to say and do when GitHub refuses a request for rate limiting: say that, say when GitHub says it resets,
+ * and try again then. Only the reset time is stated: the number of points left is left out, because the two places
+ * GitHub reports it can disagree (see `fetchLimitStatus`), and the refusal itself already says the limit was hit.
  */
 export const adviseOnLimit = (limit: ApiLimit | undefined, now: number, format: (ms: number) => string = timeOf): LimitAdvice => {
   const refused = 'GitHub refused the request with a rate-limit error.'
@@ -82,13 +82,13 @@ export const adviseOnLimit = (limit: ApiLimit | undefined, now: number, format: 
       retryInMs: 60_000,
     }
   }
-  const status = `GitHub's rate-limit status shows ${count(limit.remaining)} of ${count(limit.limit)} points left and a reset at ${format(limit.resetAt)}`
+  const resets = `GitHub says it resets at ${format(limit.resetAt)}`
   if (!(limit.resetAt > now)) {
-    return { message: `${refused} ${status}, which has passed; Shipwatch will try again in a minute.`, giveUp: `${refused} ${status}, which has passed. Choose Refresh to try again.`, retryInMs: 60_000 }
+    return { message: `${refused} ${resets}, which has passed; Shipwatch will try again in a minute.`, giveUp: `${refused} ${resets}, which has passed. Choose Refresh to try again.`, retryInMs: 60_000 }
   }
   return {
-    message: `${refused} ${status}; Shipwatch will try again then.`,
-    giveUp: `${refused} ${status}. Choose Refresh after that to try again.`,
+    message: `${refused} ${resets}; Shipwatch will try again then.`,
+    giveUp: `${refused} ${resets}. Choose Refresh after that to try again.`,
     retryInMs: limit.resetAt - now + RESET_MARGIN_MS,
   }
 }
