@@ -84,6 +84,9 @@ test('merged has a purple of its own that a theme does not remap', () => {
   expect(html).toContain('--merged:#a371f7') // dark
   const themed = /body\[class\$="-theme"\]\{([^}]*)\}/.exec(html)![1]!
   expect(themed).not.toContain('--merged') // the theme re-points the other status colours at its own tokens, but not this one
-  expect(html).toContain('.step.merged.done{color:var(--merged)')
+  // The stepper is about progress, not about one PR's state: every finished step is the same green.
+  expect(html).not.toContain('.step.merged')
+  expect(html).not.toContain('.step.released')
+  expect(html).toContain('.step.done{color:var(--ready);border-color:var(--ready)}')
   expect(html).toContain('.pill.recent{background:var(--merged)}')
 })
