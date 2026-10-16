@@ -314,6 +314,23 @@ function setupMerge(): void {
   })
 }
 
+/**
+ * The Stats banner's "Fetch now": reads the stats history right away, spending the share of GitHub's hourly
+ * allowance that is normally kept for other tools. Only the report may ask; it needs a dashboard read to have
+ * happened (that is what the access comes from).
+ */
+function setupFetchNow(): void {
+  ipcMain.handle('shipwatch:fetch-stats-now', async event => {
+    const isReport = event.senderFrame?.url === pathToFileURL(userFile('report.html')).href
+    if (!isReport || !win) return { ok: false, message: 'Only the report can ask for this.' }
+    if (isLoadingStats) return { ok: true, message: 'Already loading.' }
+    if (!lastRead) return { ok: false, message: 'Not connected to GitHub yet; try again in a moment.' }
+    const config = await loadConfig()
+    void loadStatsInBackground({ io: nodeIO(), store: new FileStore(userFile('stats.json')), config, infraVerdicts, now: Date.now(), spendReserve: true }, lastRead)
+    return { ok: true, message: 'Loading now.' }
+  })
+}
+
 function createWindow(): void {
   win = new BrowserWindow({
     width: 1180,
@@ -362,6 +379,7 @@ if (!app.requestSingleInstanceLock()) {
   void app.whenReady().then(() => {
     setupMenu()
     setupMerge()
+    setupFetchNow()
     createWindow()
     void refresh()
     setupAutoUpdater(() => win)

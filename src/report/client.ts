@@ -122,7 +122,14 @@ const th = (label: string, key: string, sort: Sort, set: (key: string) => void):
 const compare = (x: string | number, y: string | number): number => (x < y ? -1 : x > y ? 1 : 0)
 
 /** Only the standalone app offers a way to act on a PR (its preload script adds this); a report opened in a browser has none. */
-const bridge = (window as unknown as { shipwatch?: { mergePr: (repo: string, number: number) => Promise<{ ok: boolean; message: string }> } }).shipwatch
+const bridge = (
+  window as unknown as {
+    shipwatch?: {
+      mergePr: (repo: string, number: number) => Promise<{ ok: boolean; message: string }>
+      fetchStatsNow?: () => Promise<{ ok: boolean; message: string }>
+    }
+  }
+).shipwatch
 
 /**
  * A Merge button for an open PR that could be merged: not a draft, no conflict, no failing check. The app asks
@@ -275,6 +282,30 @@ function commitsOverTime(agg: ReturnType<typeof aggregate>, sinceMs: number, col
 
 type Status = NonNullable<ReportData['statsStatus']>
 
+/**
+ * "Fetch now" under a stopped stats load: the app reads the history right away, using the share of GitHub's
+ * hourly allowance it normally keeps for other tools. Only the app can (a report opened in a browser has no way to).
+ */
+function fetchNowControl(): HTMLElement[] {
+  if (!bridge?.fetchStatsNow) return []
+  const ask = bridge.fetchStatsNow
+  const note = el('span', { class: 'dim' })
+  const btn = el('button', { class: 'btn', title: "Loads the rest now, using the part of GitHub's hourly allowance kept free for your other tools" }, 'Fetch now')
+  btn.addEventListener('click', async () => {
+    btn.setAttribute('disabled', '')
+    note.textContent = ' Working...'
+    let said = 'Could not reach the app.'
+    try {
+      said = (await ask()).message
+    } catch {
+      // Keep the message above.
+    }
+    btn.removeAttribute('disabled')
+    note.textContent = ` ${said}`
+  })
+  return [el('div', { class: 'row' }, btn, note, el('span', { class: 'dim' }, 'Uses the allowance kept free for your other tools.'))]
+}
+
 /** Fills the notice for `st`: what is happening, a bar while it loads, and what is held so far. */
 function fillBanner(box: HTMLElement, st: Status, kind: 'stats' | 'board' = 'stats'): void {
   box.className = st.state === 'error' ? 'banner bad' : 'banner'
@@ -301,6 +332,7 @@ function fillBanner(box: HTMLElement, st: Status, kind: 'stats' | 'board' = 'sta
       el('strong', {}, 'Stats are incomplete'),
       el('div', {}, st.text),
       el('div', { class: 'dim' }, `${heldNote} What has loaded is kept; choose View, Refresh to carry on from there.`),
+      ...fetchNowControl(),
     )
     return
   }

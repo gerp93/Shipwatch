@@ -369,4 +369,8 @@ test('the load stops to leave the reserve alone, waiting for a reset that is soo
   await refreshStats({ io: fakeGitHub(answer(3 * 60_000)).io, access: ACCESS, store: memoryStore(), owner: 'me', aiNames: [], now: NOW, wait: async ms => void waits.push(ms) }, emptyStats({ range: 90 }))
   expect(waits[0]).toBe(2_000)
   expect(waits[1]! > 3 * 60_000 && waits[1]! < 3 * 60_000 + 10_000).toBe(true)
+  // Asked to spend the reserve: it does not stop or wait at all while there is allowance for the next request.
+  const spendWaits: number[] = []
+  await refreshStats({ io: fakeGitHub(answer(60 * 60_000)).io, access: ACCESS, store: memoryStore(), owner: 'me', aiNames: [], now: NOW, wait: async ms => void spendWaits.push(ms), spendReserve: true }, emptyStats({ range: 90 }))
+  expect(spendWaits.every(ms => ms <= 8_000)).toBe(true)
 })
