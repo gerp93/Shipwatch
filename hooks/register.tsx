@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { Register } from 'claude-code'
 
-import { ago, failedOnMain, fixPrompt, snapshot, transitions } from '../src/core/analyze'
+import { ago, failedOnMain, fixPrompt, snapshot, transitionEvents } from '../src/core/analyze'
 import type { Seen } from '../src/core/analyze'
 import { buildBoard } from '../src/core/boardService'
 import { barsSvg, chartColor, donutSvg, legendSvg, weeksSvg } from '../src/core/charts'
@@ -112,11 +112,22 @@ let access: Access | undefined
 let resolvedOwner = ''
 let isPolling = false
 const infraVerdicts: InfraVerdicts = new Map()
-/** `repo:commit` pairs already sent for fixing, and how many prompts this load has sent. */
-const prompted = new Set<string>()
-let promptCount = 0
 let isLoadingStats = false
 let timer: { cancel: () => void } | undefined
+
+const readStoreSet = async ($: any, key: string): Promise<Set<string>> => {
+  const raw = await $.store.get(key)
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return new Set()
+  return new Set(Object.keys(raw as Record<string, unknown>))
+}
+
+const writeStoreSet = async ($: any, key: string, values: Set<string>): Promise<void> => {
+  await $.store.set(key, Object.fromEntries([...values].map(v => [v, true])))
+}
+
+const readPromptState = async ($: any): Promise<Set<string>> => readStoreSet($, 'shipwatch:prompted')
+
+const readToastState = async ($: any): Promise<Set<string>> => readStoreSet($, 'shipwatch:toasted')
 
 async function refresh($: any): Promise<number> {
   if (isPolling) return cfg.idleMs
@@ -147,22 +158,31 @@ async function refresh($: any): Promise<number> {
       infraVerdicts,
     )
 
-    for (const line of transitions(seen, repos)) $.ui.toast(line)
+    const toasted = await readToastState($)
+    for (const event of transitionEvents(seen, repos)) {
+      if (toasted.has(event.key)) continue
+      $.ui.toast(event.line)
+      toasted.add(event.key)
+    }
+    await writeStoreSet($, 'shipwatch:toasted', toasted)
+
     if (cfg.autoFix) {
+      const promptedNow = await readPromptState($)
       for (const r of failedOnMain(seen, repos)) {
         const key = `${r.name}:${r.headOid}`
-        if (prompted.has(key) || promptCount >= cfg.autoFixLimit) continue
-        prompted.add(key)
+        if (promptedNow.has(key) || promptedNow.size >= cfg.autoFixLimit) continue
+        promptedNow.add(key)
         const text = fixPrompt(resolvedOwner, r)
         if (!text) {
           $.ui.toast(`Shipwatch: ${r.name} main build failed (unusual name, not auto-fixing)`)
           continue
         }
-        promptCount += 1
-        $.ui.toast(`Shipwatch: asking Claude to look into ${r.name} main (${promptCount}/${cfg.autoFixLimit})`)
+        const used = promptedNow.size
+        $.ui.toast(`Shipwatch: asking Claude to look into ${r.name} main (${used}/${cfg.autoFixLimit})`)
         // Queued: it starts its own turn once this session is idle.
         void $.prompt.submit({ text })
       }
+      await writeStoreSet($, 'shipwatch:prompted', promptedNow)
     }
     seen = snapshot(repos)
     $.ui.status(statusLine(repos))
