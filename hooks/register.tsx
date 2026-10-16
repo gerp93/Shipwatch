@@ -359,6 +359,8 @@ export const register: Register = (on, options) => {
       name: 'shipwatch',
       description: 'Open the Shipwatch dashboard: builds, open PRs and release progress for every repo',
     })
+    // Opening it unasked: a surface that docks panes shows it beside the transcript, else it waits undrawn.
+    if (options.openOnStart === true) await $.ui.open({ id: PANE, title: 'Shipwatch' })
     loop($, 1)
 
     return next(e)

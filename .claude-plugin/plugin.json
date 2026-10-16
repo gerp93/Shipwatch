@@ -49,6 +49,12 @@
       "sensitive": true,
       "default": ""
     },
+    "openOnStart": {
+      "type": "boolean",
+      "title": "Open the pane on start",
+      "description": "Open the Shipwatch pane when a session starts, instead of waiting for /shipwatch. Every session then polls GitHub for the board, sharing the same hourly allowance.",
+      "default": false
+    },
     "autoFix": {
       "type": "boolean",
       "title": "Auto-fix broken main builds",

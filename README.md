@@ -145,6 +145,7 @@ or for sessions the desktop app starts, set `CLAUDE_CODE_PLUGIN_DIRS` (and
 | `pollSeconds` | `60` | Refresh interval while nothing is building. |
 | `maxRepos` | `40` | Most recently pushed repos to track (1-100). |
 | `staleDays` | `14` | A repo with no push or PR activity for this long, and nothing building, moves to a collapsed Stale group (`s` toggles it). |
+| `openOnStart` | `false` | Open the pane when a session starts, instead of waiting for `/shipwatch`. A surface that docks panes (the desktop app) shows it beside the transcript (from 144 columns wide; narrower, it waits until you open it). Every open session then polls GitHub, all drawing on the same hourly allowance. |
 | `autoFix` | `false` | When a default-branch build goes from running to failing, queue a prompt in the session asking Claude to find the cause and open a fix PR (never a direct push). Starts its own turn once the session is idle. Only one session is asked, however many are open. |
 | `autoFixLimit` | `5` | Most fix prompts in 24 hours, counted across every open session; one per failing commit, and at most one per repo per hour. |
 | `aiNames` | empty | Extra names to count as AI in Stats, comma-separated, besides the ones recognized automatically. |
