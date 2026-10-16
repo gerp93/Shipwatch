@@ -124,33 +124,46 @@ const bridge = (
   window as unknown as {
     shipwatch?: {
       mergePr: (repo: string, number: number) => Promise<{ ok: boolean; message: string }>
+      closePr?: (repo: string, number: number) => Promise<{ ok: boolean; message: string }>
       fetchStatsNow?: () => Promise<{ ok: boolean; message: string }>
     }
   }
 ).shipwatch
 
 /**
- * A Merge button for an open PR that could be merged: not a draft, no conflict, no failing check. The app asks
- * the user to confirm and re-reads the PR from GitHub, so this is only the way in, not the decision.
+ * The buttons against an open PR: Merge when it could be merged (not set aside, no conflict, no failing check) and
+ * Close always. The app asks the user to confirm and re-reads the PR from GitHub, so these are only the way in, not
+ * the decision. They share one line for what the app said back.
  */
-const mergeControl = (repo: string, p: PrView): Child => {
-  if (!bridge || p.parked || p.hasConflict || p.checks === 'failing') return null
-  const waiting = p.checks === 'running'
+const prActions = (repo: string, p: PrView): Child => {
+  if (!bridge) return null
   const note = el('span', { class: 'dim' })
-  const btn = el('button', { class: 'btn', title: waiting ? 'Merges when its checks pass' : 'Merge this PR' }, waiting ? 'Merge when checks pass' : 'Merge')
-  btn.addEventListener('click', async () => {
-    btn.setAttribute('disabled', '')
-    note.textContent = ' Working...'
-    let said = 'Could not reach the app.'
-    try {
-      said = (await bridge.mergePr(repo, p.number)).message
-    } catch {
-      // Keep the message above.
-    }
-    btn.removeAttribute('disabled')
-    note.textContent = ` ${said}`
-  })
-  return el('span', {}, ' ', btn, note)
+  const buttons: HTMLElement[] = []
+  const button = (label: string, title: string, ask: () => Promise<{ ok: boolean; message: string }>): HTMLElement => {
+    const btn = el('button', { class: 'btn', title }, label)
+    btn.addEventListener('click', async () => {
+      buttons.forEach(b => b.setAttribute('disabled', ''))
+      note.textContent = ' Working...'
+      let said = 'Could not reach the app.'
+      try {
+        said = (await ask()).message
+      } catch {
+        // Keep the message above.
+      }
+      buttons.forEach(b => b.removeAttribute('disabled'))
+      note.textContent = ` ${said}`
+    })
+    buttons.push(btn)
+    return btn
+  }
+  const out: Child[] = []
+  if (!p.parked && !p.hasConflict && p.checks !== 'failing') {
+    const waiting = p.checks === 'running'
+    out.push(' ', button(waiting ? 'Merge when checks pass' : 'Merge', waiting ? 'Merges when its checks pass' : 'Merge this PR', () => bridge.mergePr(repo, p.number)))
+  }
+  const closePr = bridge.closePr
+  if (closePr) out.push(' ', button('Close', 'Close this PR without merging it', () => closePr(repo, p.number)))
+  return out.length ? el('span', {}, ...out, note) : null
 }
 
 // ---- Dashboard ---------------------------------------------------------------------------------------------
@@ -244,7 +257,7 @@ function dashboard(): HTMLElement {
               {},
               ...(openPrs(r).length
                 ? openPrs(r).map(p =>
-                    el('div', {}, el('a', { href: p.url, target: '_blank', rel: 'noopener' }, `#${p.number}`), ` ${p.title}`, p.isDraft ? el('span', { class: 'dim' }, ' draft') : p.parked ? el('span', { class: 'dim' }, ' set aside') : null, mergeControl(r.name, p)),
+                    el('div', {}, el('a', { href: p.url, target: '_blank', rel: 'noopener' }, `#${p.number}`), ` ${p.title}`, p.isDraft ? el('span', { class: 'dim' }, ' draft') : p.parked ? el('span', { class: 'dim' }, ' set aside') : null, prActions(r.name, p)),
                   )
                 : [el('span', { class: 'dim' }, '-')]),
             ),
@@ -375,7 +388,7 @@ function apiChipText(): { text: string; tone: string; title: string } | null {
     title:
       `GraphQL points left this hour: ${g.remaining.toLocaleString()} of ${g.limit.toLocaleString()}, resetting at ${reset}.` +
       (core ? ` REST: ${core.remaining.toLocaleString()} of ${core.limit.toLocaleString()}.` : '') +
-      ' Read from GitHub every 30 seconds without using any points.',
+      ' Taken from the numbers GitHub returns with each read, so it uses no extra points.',
   }
 }
 

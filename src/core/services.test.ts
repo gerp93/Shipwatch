@@ -2,7 +2,7 @@ import { expect, test } from 'claude-code/testing'
 
 import { buildBoard } from './boardService'
 import type { InfraVerdicts } from './boardService'
-import { fetchGraphqlReset } from './github'
+import { fetchGraphqlReset, fetchLimitStatus } from './github'
 import type { Access, IO, Store } from './ports'
 import { STATS_FRESH_MS, loadStatsCache, refreshStats, statsAreFresh } from './statsService'
 import type { StatsBoard } from './types'
@@ -294,7 +294,7 @@ test('a load that hits the hourly limit waits for the reset when it is soon, and
   expect(waits.length).toBeGreaterThan(0)
   expect(waits[0]! > 3 * 60_000 - 5_000 && waits[0]! < 3 * 60_000 + 10_000).toBe(true)
   expect(soonFailure).toContain('rate-limit error') // it gave up after a few waits, and says what GitHub reports
-  expect(soonFailure).toContain('0 of 5,000 points left and a reset at')
+  expect(soonFailure).toContain('GitHub says it resets at')
   expect(soonFailure).toContain('Choose Refresh')
 
   // Far off (an hour): no waiting; it stops and says when the allowance returns.
@@ -310,7 +310,7 @@ test('a load that hits the hourly limit waits for the reset when it is soon, and
   }
   expect(far).toEqual([])
   expect(farFailure).toContain('rate-limit error')
-  expect(farFailure).toContain('a reset at')
+  expect(farFailure).toContain('GitHub says it resets at')
 })
 
 const quiet = (extra: (ask: Ask) => unknown | undefined) => (ask: Ask): unknown => {
@@ -340,7 +340,8 @@ test('a refusal is waited out until the reset time GitHub reports, even with poi
   )
   expect(waits.length).toBe(1)
   expect(waits[0]! > 180_000 - 2_000 && waits[0]! < 180_000 + 10_000).toBe(true) // until the reset it reported, not a time of its own
-  expect(said.some(t => t.includes('4,200 of 5,000 points left') && t.includes('Shipwatch will try again then'))).toBe(true)
+  expect(said.some(t => t.includes('GitHub says it resets at') && t.includes('Shipwatch will try again then'))).toBe(true)
+  expect(said.some(t => t.includes('points'))).toBe(false)
   for (const guess of ['briefly', 'burst', '90 s']) expect(said.some(t => t.includes(guess))).toBe(false)
   expect(done.coveredFrom).toBe('2026-07-11')
 })
@@ -373,4 +374,24 @@ test('the load stops to leave the reserve alone, waiting for a reset that is soo
   const spendWaits: number[] = []
   await refreshStats({ io: fakeGitHub(answer(60 * 60_000)).io, access: ACCESS, store: memoryStore(), owner: 'me', aiNames: [], now: NOW, wait: async ms => void spendWaits.push(ms), spendReserve: true }, emptyStats({ range: 90 }))
   expect(spendWaits.every(ms => ms <= 8_000)).toBe(true)
+})
+
+test('GitHub\'s own GraphQL count is trusted over the REST page, which is only the fallback when GraphQL refuses', async () => {
+  const resetAt = '2026-10-16T02:42:00Z'
+  // GraphQL says nothing is left; the REST page says nearly everything is, with a later reset (as it did in practice).
+  const disagree = fakeGitHub(ask => {
+    if (ask.kind === 'rest' && ask.text === 'rate_limit') return { resources: { graphql: { remaining: 4_820, limit: 5_000, reset: Date.parse('2026-10-16T02:54:56Z') / 1000 } } }
+    return { data: { rateLimit: { limit: 5_000, remaining: 0, resetAt } } }
+  })
+  expect(await fetchLimitStatus(disagree.io, ACCESS)).toEqual({ remaining: 0, limit: 5_000, resetAt: Date.parse(resetAt) })
+
+  // GraphQL refusing the question (nothing left): the REST page's reset time is used.
+  const refusing = fakeGitHub(ask => {
+    if (ask.kind === 'rest' && ask.text === 'rate_limit') return { resources: { graphql: { remaining: 4_820, limit: 5_000, reset: Date.parse('2026-10-16T02:54:56Z') / 1000 } } }
+    throw new Error('gh: API rate limit already exceeded for user ID 1.')
+  })
+  expect((await fetchLimitStatus(refusing.io, ACCESS))?.resetAt).toBe(Date.parse('2026-10-16T02:54:56Z'))
+
+  // Neither answers: unknown, not invented.
+  expect(await fetchLimitStatus(fakeGitHub(() => ({})).io, ACCESS)).toBeUndefined()
 })

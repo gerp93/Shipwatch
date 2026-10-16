@@ -1,7 +1,7 @@
 import type { Access, IO, Store } from './ports'
 import { RATE_LIMITED, RESERVE_FRACTION, adviseOnLimit, reserveMessage } from './budget'
 import type { Budget } from './budget'
-import { fetchApiLimits } from './github'
+import { fetchLimitStatus } from './github'
 import { dateOf, earliestKnown, mergeById, planFetch, rangeSince, summarizePr } from './stats'
 import { fetchMergedPrs, fetchReposCreated, fetchViewerLogin } from './statsFetch'
 import type { PrSummary, RepoCreated, StatsBoard } from './types'
@@ -94,7 +94,7 @@ export const refreshStats = async (deps: StatsDeps, s: StatsBoard): Promise<Stat
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err)
         if (!deps.wait || !RATE_LIMITED.test(message)) throw err
-        const advice = adviseOnLimit((await fetchApiLimits(io, access))?.graphql, Date.now())
+        const advice = adviseOnLimit(await fetchLimitStatus(io, access), Date.now())
         // GitHub reports when it resets: wait for that if it is soon, else stop (what has been kept stays).
         if (advice.retryInMs > RATE_LIMIT_MAX_WAIT_MS || attempt >= RATE_LIMIT_TRIES) throw new Error(advice.giveUp)
         deps.onProgress?.(`${advice.message} (try ${attempt} of ${RATE_LIMIT_TRIES - 1}, ${where})`)

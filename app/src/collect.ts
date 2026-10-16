@@ -9,7 +9,7 @@ import { dirname } from 'node:path'
 
 import { adviseOnLimit, isRateLimit } from '../../src/core/budget'
 import type { Budget } from '../../src/core/budget'
-import { connect, fetchApiLimits, resolveOwner } from '../../src/core/github'
+import { connect, fetchLimitStatus, resolveOwner } from '../../src/core/github'
 import { fetchRecentPrs } from '../../src/core/recent'
 import type { IO, Store } from '../../src/core/ports'
 import type { ReportData } from '../../src/core/report'
@@ -82,7 +82,7 @@ export class RateLimited extends Error {
 const explain = async (io: IO, access: Access, err: unknown): Promise<Error> => {
   const message = err instanceof Error ? err.message : String(err)
   if (!isRateLimit(message)) return err instanceof Error ? err : new Error(message)
-  const advice = adviseOnLimit((await fetchApiLimits(io, access))?.graphql, Date.now())
+  const advice = adviseOnLimit(await fetchLimitStatus(io, access), Date.now())
   return new RateLimited(advice.message, advice.retryInMs)
 }
 
