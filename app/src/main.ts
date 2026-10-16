@@ -11,7 +11,8 @@ import { pathToFileURL } from 'node:url'
 import type { InfraVerdicts } from '../../src/core/boardService'
 import { pace } from '../../src/core/budget'
 import type { ApiLimits } from '../../src/core/budget'
-import { fetchApiLimits } from '../../src/core/github'
+import { connect, fetchApiLimits } from '../../src/core/github'
+import type { Access } from '../../src/core/ports'
 import { fetchRecentPrs } from '../../src/core/recent'
 import { renderReport } from '../../src/core/report'
 import type { BoardStatus, ReportData, StatsStatus } from '../../src/core/report'
@@ -213,6 +214,8 @@ async function refresh(): Promise<void> {
       toPage(setBoardStatusScript(boardStatus))
       // A rate limit says when it resets (the message has the time); ask again then. Anything else, in a few minutes.
       scheduleRefresh(err instanceof RateLimited ? err.retryInMs : RETRY_AFTER_ERROR_MS)
+      startLiveTimers()
+      void updateLimits()
       return
     }
     lastRead = read
@@ -236,10 +239,20 @@ async function refresh(): Promise<void> {
   }
 }
 
-/** What is left of GitHub's allowances, asked of the endpoint that costs nothing, and handed to the header's readout. */
+/** How to reach GitHub for the readout when no dashboard read has succeeded to supply it (the read is what may be refused). */
+let limitsAccess: Access | undefined
+
+/**
+ * What is left of GitHub's allowances, asked of the endpoint that costs nothing, and handed to the header's readout.
+ * It does not wait for a dashboard read: when GitHub is refusing that read, this is exactly when the readout is wanted.
+ */
 async function updateLimits(): Promise<void> {
-  if (!lastRead) return
-  const limits = await fetchApiLimits(nodeIO(), lastRead.access)
+  try {
+    limitsAccess ??= lastRead?.access ?? (await connect(nodeIO(), (await loadConfig()).token))
+  } catch {
+    return
+  }
+  const limits = await fetchApiLimits(nodeIO(), lastRead?.access ?? limitsAccess)
   if (!limits) return
   lastApi = limits
   toPage(setApiScript(limits))
