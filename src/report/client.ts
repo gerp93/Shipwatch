@@ -301,6 +301,26 @@ function commitsOverTime(agg: ReturnType<typeof aggregate>, sinceMs: number, col
   )
 }
 
+/** PRs merged per day, week or month across the chosen range, stacked by who, empty stretches included. */
+function prsOverTime(agg: ReturnType<typeof aggregate>, sinceMs: number, color: (actor: string) => string): HTMLElement {
+  const bucket = bucketFor((data.generatedAt - sinceMs) / 86_400_000)
+  const who = [...new Set(agg.prDays.flatMap(d => Object.keys(d.prs)))].sort((x, y) => (x === YOU ? -1 : y === YOU ? 1 : 0))
+  const { labels, values } = commitSeries(agg.prDays.map(d => ({ date: d.date, commits: d.prs })), who, bucket, sinceMs, data.generatedAt)
+  // Months carry their year already; days and weeks show it only when the range crosses a year.
+  const crossesYear = labels.length > 0 && labels[0]!.slice(0, 4) !== labels[labels.length - 1]!.slice(0, 4)
+  const text = (l: string): string => (bucket === 'month' || crossesYear ? l : l.slice(5))
+  const columns = labels.map((l, i) => ({
+    label: text(l),
+    parts: who.map(a => ({ label: actorLabel(a), value: values[a]![i] ?? 0, color: color(a) })),
+  }))
+  return el(
+    'div',
+    {},
+    el('h3', {}, `PRs merged per ${bucket}`, el('span', { class: 'dim' }, ` · ${rangeLabel(state.range)}`)),
+    raw(weeksSvg(columns, chartWidth(), 170, bucket === 'day' ? 'Day' : bucket === 'week' ? 'Week of' : 'Month')),
+  )
+}
+
 // ---- Stats still loading -----------------------------------------------------------------------------------
 // The app shows the dashboard first and reads the long stats history afterwards, handing the page what it has
 // as it arrives (see `shipwatchLive` at the end). Until then the Stats tab says what is going on.
@@ -553,25 +573,7 @@ function stats(): HTMLElement {
     agg.mixed > 0 ? el('p', { class: 'dim' }, `${agg.mixed} PR${agg.mixed === 1 ? ' has' : 's have'} commits from more than one of the above.`) : null,
     el('p', { class: 'dim' }, "Attributed by each commit's author and Co-Authored-By lines, not by who typed the code. Lines are added and removed in commits, so a commit that rewrites an earlier one counts again."),
     agg.days.length > 0 ? commitsOverTime(agg, sinceMs, color) : null,
-    agg.weeks.length > 0
-      ? el(
-          'div',
-          {},
-          el('h3', {}, 'PRs merged per week', el('span', { class: 'dim' }, ' · last 26 weeks')),
-          raw(
-            weeksSvg(
-              agg.weeks.slice(-26).map(w => ({
-                label: w.start.slice(5),
-                parts: Object.entries(w.prs)
-                  .sort(([x], [y]) => (x === YOU ? -1 : y === YOU ? 1 : 0))
-                  .map(([actor, value]) => ({ label: actorLabel(actor), value, color: color(actor) })),
-              })),
-              chartWidth(),
-              170,
-            ),
-          ),
-        )
-      : null,
+    agg.prDays.length > 0 ? prsOverTime(agg, sinceMs, color) : null,
     repoRows.length > 0
       ? el(
           'div',

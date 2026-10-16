@@ -293,3 +293,17 @@ test('a hidden AI or human only counts while its group is shown one by one', () 
   expect(hiddenInView(hidden, 'combined', 'separate')).toEqual(['@sam'])
   expect(hiddenInView(hidden, 'separate', 'separate')).toEqual(['Claude', '@sam'])
 })
+
+test('PRs merged are counted per day, a mixed PR under Mixed, so they can be charted over the whole range', () => {
+  const prs = [
+    pr('1', '2026-10-05T10:00:00Z', 'a', { You: [1, 1, 0] }),
+    pr('2', '2026-10-05T18:00:00Z', 'a', { You: [1, 1, 0], Claude: [2, 5, 0] }),
+    pr('3', '2026-10-12T09:00:00Z', 'b', { Claude: [3, 8, 1] }),
+  ]
+  const agg = aggregate(prs, 0, 'combined')
+  expect(agg.prDays).toEqual([
+    { date: '2026-10-05', prs: { You: 1, Mixed: 1 } },
+    { date: '2026-10-12', prs: { AI: 1 } },
+  ])
+  expect(agg.prDays.flatMap(d => Object.values(d.prs)).reduce((a, b) => a + b, 0)).toBe(agg.prs)
+})

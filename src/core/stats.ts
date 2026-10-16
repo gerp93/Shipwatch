@@ -127,6 +127,8 @@ export type Aggregate = {
   weeks: Array<{ start: string; prs: Record<string, number> }>
   /** Commits per actor for each day (UTC) a PR in view merged, oldest first. A commit counts on its PR's merge day. */
   days: Array<{ date: string; commits: Record<string, number> }>
+  /** PRs merged per day (UTC), counted as `weeks` counts them (a mixed PR under MIXED), oldest first. */
+  prDays: Array<{ date: string; prs: Record<string, number> }>
 }
 
 export const MIXED = 'Mixed'
@@ -166,6 +168,7 @@ export const aggregate = (
   const repoMap = new Map<string, { prs: number; actors: Map<string, Totals> }>()
   const weekMap = new Map<string, Record<string, number>>()
   const dayMap = new Map<string, Record<string, number>>()
+  const prDayMap = new Map<string, Record<string, number>>()
   let inView = 0
   let mixed = 0
 
@@ -209,6 +212,9 @@ export const aggregate = (
     const day = dayMap.get(date) ?? {}
     for (const [actor, [c]] of folded) day[actor] = (day[actor] ?? 0) + c
     dayMap.set(date, day)
+    const prDay = prDayMap.get(date) ?? {}
+    prDay[label] = (prDay[label] ?? 0) + 1
+    prDayMap.set(date, prDay)
   }
 
   const actors = (map: Map<string, Totals>) =>
@@ -225,6 +231,7 @@ export const aggregate = (
       .sort((x, y) => y.prs - x.prs),
     weeks: [...weekMap.entries()].map(([start, prs]) => ({ start, prs })).sort((x, y) => x.start.localeCompare(y.start)),
     days: [...dayMap.entries()].map(([date, commits]) => ({ date, commits })).sort((x, y) => x.date.localeCompare(y.date)),
+    prDays: [...prDayMap.entries()].map(([date, prs]) => ({ date, prs })).sort((x, y) => x.date.localeCompare(y.date)),
   }
 }
 
