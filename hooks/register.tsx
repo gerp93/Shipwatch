@@ -9,6 +9,7 @@ import type { InfraVerdicts } from '../src/core/boardService'
 import { adviseOnLimit, isRateLimit, pace, throttleNote } from '../src/core/budget'
 import type { ApiLimits, Budget } from '../src/core/budget'
 import { claimFix } from '../src/core/fixClaims'
+import type { ClaimStore } from '../src/core/fixClaims'
 import { connect, fetchLimitStatus, resolveOwner } from '../src/core/github'
 import { fetchRecentPrs } from '../src/core/recent'
 import { openArgv, renderReport } from '../src/core/report'
@@ -155,7 +156,13 @@ async function refresh($: any): Promise<number> {
           $.ui.toast(`Shipwatch: ${r.name} main build failed (unusual name, not auto-fixing)`)
           continue
         }
-        const claim = await claimFix($.store, {
+        const store: ClaimStore = {
+          get: key => $.store.get(key),
+          set: (key, value) => $.store.set(key, value),
+          delete: key => $.store.delete(key),
+          keys: () => $.store.keys(),
+        }
+        const claim = await claimFix(store, {
           repo: r.name,
           commit: r.headOid,
           session,
