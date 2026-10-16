@@ -80,6 +80,9 @@ table.compact{width:auto;min-width:340px}
 .banner{border:1px solid var(--line);background:var(--card);border-radius:8px;padding:10px 14px;margin:8px 0}.banner.bad{border-color:var(--fail)}
 .meter{height:6px;border-radius:3px;background:var(--line);overflow:hidden;margin:8px 0}.meter>div{height:100%;width:0;background:var(--ready);transition:width .4s}
 .meter[data-indeterminate]>div{width:30%;animation:slide 1.2s ease-in-out infinite}@keyframes slide{0%{margin-left:-30%}100%{margin-left:100%}}
+.tabs{display:grid;grid-template-columns:1fr 1fr;margin:4px 0 14px;border-bottom:1px solid var(--line)}
+.tab{font:inherit;text-align:center;padding:10px 12px;background:none;color:var(--dim);border:0;border-bottom:3px solid transparent;margin-bottom:-1px;cursor:pointer}
+.tab:hover{background:var(--card);color:var(--fg)}.tab.on{color:var(--fg);font-weight:600;border-bottom-color:var(--accent)}
 .chip-api{font-size:12px;padding:2px 9px;border:1px solid var(--line);border-radius:10px;color:var(--dim);white-space:nowrap}
 .chip-api.low{color:var(--running);border-color:var(--running)}.chip-api.critical{color:var(--fail);border-color:var(--fail)}
 .logo{height:36px;width:auto;margin-right:4px}select.theme{font:inherit;background:var(--card);color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:4px 8px}
