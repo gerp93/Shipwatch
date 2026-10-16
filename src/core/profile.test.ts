@@ -23,7 +23,7 @@ test('a repo is profiled from its merged PRs: size of the work, who did it, and 
   // Automation's commits and lines are left out of the commit count; lines still count what merged.
   expect(p.commits).toBe(12)
   expect(p.aiCommits).toBe(8)
-  expect(p.aiShare).toBeCloseTo(8 / 12, 5)
+  expect(Math.abs(p.aiShare - 8 / 12) < 1e-9).toBe(true)
   expect(p.adds).toBe(100 + 950 + 1040 + 0)
   expect(p.netLines).toBe(p.adds - p.dels)
   expect(p.startedAt).toBe('2026-10-01T08:00:00Z')
@@ -53,7 +53,7 @@ test('session time and releases are attached when known, and lines per hour need
   const app = out.find(x => x.repo === 'app')!
   expect(app.releases).toBe(7)
   expect(app.effort!.tokens).toBe(1_500_000)
-  expect(app.linesPerHour).toBeCloseTo(app.netLines / 4, 5)
+  expect(Math.abs(app.linesPerHour! - app.netLines / 4) < 1e-9).toBe(true)
   // One minute of work says nothing about a rate.
   expect(out.find(x => x.repo === 'tiny')!.linesPerHour).toBe(undefined)
   expect(out.find(x => x.repo === 'tiny')!.releases).toBe(undefined)
