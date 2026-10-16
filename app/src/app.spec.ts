@@ -10,7 +10,7 @@ import { FileStore, nodeIO } from './adapters'
 import { readConfig } from './config'
 import { loadSavedDashboard, saveDashboard } from './collect'
 import { setApiScript, setBoardScript, setBoardStatusScript, setRecentScript, setStatsScript, setStatusScript, throttled } from './live'
-import { mergeFromReport } from './merge'
+import { closeFromReport, mergeFromReport } from './merge'
 import type { Question } from './merge'
 import { errorPage, isSafeExternalUrl, loadingPage, progressFraction } from './pages'
 
@@ -194,6 +194,47 @@ test('an error from GitHub comes back as a message, not a crash', async () => {
   const { deps } = mergeDeps([prAnswer(), { errors: [{ message: 'Resource not accessible by personal access token' }], data: { mergePullRequest: null } }], true)
   const result = await mergeFromReport(deps, 'app', 7)
   assert.deepEqual(result, { ok: false, message: 'Resource not accessible by personal access token', changed: false })
+})
+
+test('closing is checked like merging: the request is validated and the PR must be on the report, before GitHub is asked', async () => {
+  const { deps, calls } = mergeDeps([], true)
+  for (const [repo, n] of [['../x', 7], ['app', 0], ['app', '7'], [7, 7]] as const) {
+    assert.deepEqual(await closeFromReport(deps, repo, n), { ok: false, message: 'That is not a pull request.', changed: false })
+  }
+  const other = await closeFromReport(deps, 'other', 7)
+  assert.equal(other.ok, false)
+  assert.ok(other.message.includes('not on this report'))
+  assert.equal(calls(), 0)
+})
+
+test('closing asks first, and declining changes nothing', async () => {
+  const asked: Question[] = []
+  const { deps, calls } = mergeDeps([prAnswer()], false, asked)
+  assert.deepEqual(await closeFromReport(deps, 'app', 7), { ok: false, message: 'Cancelled.', changed: false })
+  assert.equal(asked.length, 1)
+  assert.equal(asked[0]!.action, 'Close')
+  assert.ok(asked[0]!.title.includes('app#7'))
+  assert.ok(asked[0]!.detail.includes('without being merged'))
+  assert.equal(calls(), 1) // only the read; nothing was closed
+})
+
+test('confirming closes the PR, and says the report is now out of date', async () => {
+  const { deps, calls } = mergeDeps([prAnswer(), { data: { closePullRequest: { pullRequest: { state: 'CLOSED' } } } }], true)
+  assert.deepEqual(await closeFromReport(deps, 'app', 7), { ok: true, message: 'Closed #7. You can reopen it on GitHub.', changed: true })
+  assert.equal(calls(), 2)
+})
+
+test('a PR already closed or merged is refused without asking, and a draft or do-not-merge PR can still be closed', async () => {
+  const asked: Question[] = []
+  const merged = mergeDeps([prAnswer({ state: 'MERGED' })], true, asked)
+  const refused = await closeFromReport(merged.deps, 'app', 7)
+  assert.equal(refused.ok, false)
+  assert.ok(refused.message.includes('already merged'))
+  assert.equal(asked.length, 0)
+
+  const draft = mergeDeps([prAnswer({ isDraft: true, title: 'DO NOT MERGE: keep open' }), { data: { closePullRequest: { pullRequest: { state: 'CLOSED' } } } }], true, asked)
+  assert.equal((await closeFromReport(draft.deps, 'app', 7)).ok, true)
+  assert.ok(asked[0]!.detail.includes('it is a draft'))
 })
 
 test('what the page is told while history loads is a literal that cannot end the script early or run anything', () => {
