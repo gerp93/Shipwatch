@@ -4,7 +4,7 @@
 // can replace them while the page is open. Kept out of client.ts so the page script only has to ask for it.
 // Bundled with the rest by scripts/build-report.mjs.
 
-import { DOT_COLOR, DOT_LABEL, clockTime, describeHour, dotStatus, dotsFor, handAngles, inWindow, shipClockSvg, summarize } from '../core/shipClock'
+import { DOT_COLOR, DOT_LABEL, clockTime, describeHour, dotStatus, dotsFor, handAngles, inWindow, shipClockSvg, summarize, sweepPaths } from '../core/shipClock'
 import type { RecentPr } from '../core/types'
 
 const node = (tag: string, style: string, text = ''): HTMLElement => {
@@ -26,8 +26,8 @@ const LIST_MAX = 10
 let source: () => RecentPr[] | undefined = () => undefined
 let timer: number | undefined
 
-/** What would change the picture: the PRs in the window and where each stands. */
-const signature = (prs: readonly RecentPr[]): string => prs.map(p => `${p.repo}#${p.number}:${p.state}:${p.checks}:${p.isDraft}`).join('|')
+/** What would change the picture: the PRs in the window and where each stands, and which hour it is (the two shades swap each hour). */
+const signature = (prs: readonly RecentPr[], now: number): string => `${prs.map(p => `${p.repo}#${p.number}:${p.state}:${p.checks}:${p.isDraft}`).join('|')}@${clockTime(now).hours}`
 
 const reduceMotion = (): boolean => window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
 
@@ -36,7 +36,7 @@ function render(panel: HTMLElement): void {
   const now = Date.now()
   const known = source()
   const recent = known === undefined ? undefined : inWindow(known, now)
-  panel.dataset.sig = signature(recent ?? [])
+  panel.dataset.sig = signature(recent ?? [], now)
   panel.replaceChildren()
 
   const dial = node('div', 'flex:none;line-height:0')
@@ -71,7 +71,7 @@ function render(panel: HTMLElement): void {
     }
     if (recent.length > LIST_MAX) key.append(node('div', 'color:var(--dim)', `+${recent.length - LIST_MAX} more`))
   }
-  key.append(node('div', 'color:var(--dim);margin-top:6px;font-size:12px', 'The hands show the time. A dot on the rim marks the minute a PR was opened, for the last 60 minutes, coloured by where it stands now.'))
+  key.append(node('div', 'color:var(--dim);margin-top:6px;font-size:12px', 'The hands show the time. A dot on the rim marks the minute a PR was opened, for the last 60 minutes, coloured by where it stands now. The dial is shaded in two colours that swap each hour: the new colour is this hour so far, so a dot in the older shade was opened the hour before.'))
   panel.append(key)
 }
 
@@ -85,7 +85,7 @@ function tick(): void {
   if (!panel) return // the Stats tab is showing
   const now = Date.now()
   const known = source()
-  const sig = signature(known === undefined ? [] : inWindow(known, now))
+  const sig = signature(known === undefined ? [] : inWindow(known, now), now)
   if (sig !== panel.dataset.sig) {
     render(panel)
     return
@@ -94,6 +94,10 @@ function tick(): void {
   rotate(panel, 'g.hh', a.hour)
   rotate(panel, 'g.mh', a.minute)
   rotate(panel, 'g.sh', a.second)
+  // The shading follows the minute hand round the dial.
+  const sweep = sweepPaths(a.minute)
+  panel.querySelector('path.sw-done')?.setAttribute('d', sweep.done)
+  panel.querySelector('path.sw-rest')?.setAttribute('d', sweep.rest)
 }
 
 /** The panel for the dashboard. `recent` says which PRs to draw, and is asked again whenever the clock redraws. */
