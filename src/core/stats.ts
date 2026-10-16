@@ -13,6 +13,8 @@ export const YOU = 'You'
 export const OTHERS = 'Others'
 export const AUTOMATION = 'Automation'
 export const ALL_AI = 'AI'
+/** An individual human other than you is stored as `@` and their login (or name), so they can be told apart. */
+export const HUMAN_PREFIX = '@'
 
 type Ident = { name?: string | null; email?: string | null; user?: { login?: string | null } | null }
 
@@ -72,7 +74,10 @@ export const aiFamilyOf = (id: Ident | null | undefined, extra: readonly string[
   return undefined
 }
 
-/** Who one (non-merge) commit is attributed to: an AI name, YOU, AUTOMATION, or OTHERS (another person). */
+/** Whether an actor key is an individual human other than you. */
+export const isHuman = (actor: string): boolean => actor.startsWith(HUMAN_PREFIX)
+
+/** Who one (non-merge) commit is attributed to: an AI name, YOU, AUTOMATION, or another human (`@login`, else OTHERS). */
 export const actorOf = (commit: RawCommit, you: string, extra: readonly string[] = []): string => {
   const identities = [commit.author, ...(commit.authors?.nodes ?? []), ...trailersOf(commit.message)]
   for (const id of identities) {
@@ -82,16 +87,17 @@ export const actorOf = (commit: RawCommit, you: string, extra: readonly string[]
   const login = commit.author?.user?.login
   if (login && you && login.toLowerCase() === you.toLowerCase()) return YOU
   if (AUTOMATION_ACCOUNTS.test(identityText(commit.author))) return AUTOMATION
-  return OTHERS
+  const who = (login || commit.author?.name || commit.author?.email || '').trim()
+  return who ? HUMAN_PREFIX + who : OTHERS
 }
 
-export const isAi = (actor: string): boolean => actor !== YOU && actor !== OTHERS && actor !== AUTOMATION
+export const isAi = (actor: string): boolean => actor !== YOU && actor !== OTHERS && actor !== AUTOMATION && !isHuman(actor)
 
 /**
  * What an actor is called on screen. `Others` is the stored key (kept so saved history stays valid), but it
- * means other people, not other AIs, and the screen says so.
+ * means humans other than you, not other AIs, and the screen says so; an individual is called by their login.
  */
-export const actorLabel = (actor: string): string => (actor === OTHERS ? 'Other people' : actor)
+export const actorLabel = (actor: string): string => (actor === OTHERS ? 'Other humans' : isHuman(actor) ? actor.slice(HUMAN_PREFIX.length) : actor)
 
 /** A merged PR boiled down to what the stats need, so it can be kept and never fetched again. */
 export const summarizePr = (raw: RawMergedPr, you: string, extra: readonly string[] = []): PrSummary => {
@@ -134,11 +140,15 @@ export const weekStart = (iso: string): string => {
   return new Date(t - day * DAY_MS).toISOString().slice(0, 10)
 }
 
-const ORDER = (actor: string): number => (actor === YOU ? 0 : isAi(actor) || actor === ALL_AI ? 1 : actor === OTHERS ? 2 : 3)
+const ORDER = (actor: string): number => (actor === YOU ? 0 : isAi(actor) || actor === ALL_AI ? 1 : actor === OTHERS || isHuman(actor) ? 2 : 3)
 
-/** What an actor is called in the chosen view: AI actors fold into one `AI` when combined; `hidden` AIs vanish. */
-const shown = (actor: string, mode: StatsMode, hidden: ReadonlySet<string>): string | null => {
+/**
+ * What an actor is called in the chosen view: AI actors fold into one `AI` when `mode` is combined, and
+ * other humans into one `Others` when `humans` is; `hidden` AIs and humans vanish.
+ */
+const shown = (actor: string, mode: StatsMode, humans: StatsMode, hidden: ReadonlySet<string>): string | null => {
   if (actor === AUTOMATION) return null
+  if (isHuman(actor)) return hidden.has(actor) ? null : humans === 'combined' ? OTHERS : actor
   if (!isAi(actor)) return actor
   if (hidden.has(actor)) return null
   return mode === 'combined' ? ALL_AI : actor
@@ -149,6 +159,7 @@ export const aggregate = (
   sinceMs: number,
   mode: StatsMode,
   hidden: readonly string[] = [],
+  humans: StatsMode = 'combined',
 ): Aggregate => {
   const hide = new Set(hidden)
   const actorTotals = new Map<string, Totals>()
@@ -172,7 +183,7 @@ export const aggregate = (
     // Fold this PR's commits into the actors the view shows.
     const folded = new Map<string, [number, number, number]>()
     for (const [actor, [c, a, d]] of Object.entries(pr.by)) {
-      const name = shown(actor, mode, hide)
+      const name = shown(actor, mode, humans, hide)
       if (!name) continue
       const [fc, fa, fd] = folded.get(name) ?? [0, 0, 0]
       folded.set(name, [fc + c, fa + a, fd + d])
@@ -262,6 +273,13 @@ export const commitSeries = (
 export const aisIn = (prs: readonly PrSummary[]): string[] => {
   const commits = new Map<string, number>()
   for (const pr of prs) for (const [actor, [c]] of Object.entries(pr.by)) if (isAi(actor)) commits.set(actor, (commits.get(actor) ?? 0) + c)
+  return [...commits.entries()].sort((a, b) => b[1] - a[1]).map(([actor]) => actor)
+}
+
+/** Every individual human other than you named in the PRs (so each can get its own switch), most active first. */
+export const humansIn = (prs: readonly PrSummary[]): string[] => {
+  const commits = new Map<string, number>()
+  for (const pr of prs) for (const [actor, [c]] of Object.entries(pr.by)) if (isHuman(actor)) commits.set(actor, (commits.get(actor) ?? 0) + c)
   return [...commits.entries()].sort((a, b) => b[1] - a[1]).map(([actor]) => actor)
 }
 
