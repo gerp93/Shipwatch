@@ -149,7 +149,11 @@ export function weeksSvg(weeks: WeekColumn[], width = 520, height = 150, unit = 
     }
     // Label about every fourth week so they never collide.
     if (i % Math.max(1, Math.ceil(weeks.length / 6)) === 0) {
-      body += `<text class="dim" x="${round(x + barW / 2)}" y="${height - 6}" text-anchor="middle">${esc(w.label)}</text>`
+      // A label that would run off either edge is anchored to it instead of centred on its bar.
+      const cx = x + barW / 2
+      const half = (w.label.length * 7) / 2
+      const anchor = cx - half < 0 ? 'start' : cx + half > width ? 'end' : 'middle'
+      body += `<text class="dim" x="${round(anchor === 'start' ? 0 : anchor === 'end' ? width : cx)}" y="${height - 6}" text-anchor="${anchor}">${esc(w.label)}</text>`
     }
   })
   return svg(width, height, body)
