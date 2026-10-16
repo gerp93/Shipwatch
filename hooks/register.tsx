@@ -27,6 +27,8 @@ import {
   barCells,
   compact,
   earliestKnown,
+  humansIn,
+  isHuman,
   rangeLabel,
   rangeSince,
   reposCreatedSince,
@@ -48,6 +50,7 @@ const view = atom({ plugin: 'shipwatch', key: 'view' } as const, 'dashboard' as 
 const INITIAL_STATS: StatsBoard = {
   range: 30,
   mode: 'combined',
+  humans: 'combined',
   hidden: [],
   prs: [],
   repos: [],
@@ -305,11 +308,11 @@ function loop($: any, wait: number): void {
 
 const AI_COLORS = ['magenta', 'blue', 'yellow', 'cyan', 'red']
 
-/** The colour an actor is drawn in: You green, each AI its own, everyone else dim. */
+/** The colour an actor is drawn in: You green, each AI its own, every human but you dim. */
 const colorOf = (actor: string, ais: readonly string[]): string | undefined => {
   if (actor === YOU) return 'green'
   if (actor === ALL_AI) return 'magenta'
-  if (actor === OTHERS || actor === AUTOMATION || actor === MIXED) return undefined
+  if (actor === OTHERS || actor === AUTOMATION || actor === MIXED || isHuman(actor)) return undefined
   const i = ais.indexOf(actor)
   return AI_COLORS[(i < 0 ? 0 : i) % AI_COLORS.length]
 }
@@ -474,8 +477,9 @@ export const register: Register = (on, options) => {
     /** The Stats view: who the shipped work is attributed to, by PR, commit and line, over a chosen range. */
     const statsTree = () => {
       const sinceMs = rangeSince(s.range, now, earliestKnown(s.repos, s.prs))
-      const agg = aggregate(s.prs, sinceMs, s.mode, s.hidden)
+      const agg = aggregate(s.prs, sinceMs, s.mode, s.hidden, s.humans)
       const ais = aisIn(s.prs)
+      const people = humansIn(s.prs)
       const created = reposCreatedSince(s.repos, sinceMs)
       const sum = (pick: (a: (typeof agg.actors)[number]) => number) => agg.actors.reduce((n, a) => n + pick(a), 0)
       const totalCommits = sum(a => a.commits)
@@ -544,6 +548,27 @@ export const register: Register = (on, options) => {
               />
             ))}
           </Box>
+          {people.length > 0 && (
+            <Box columnGap={1} marginBottom={1} flexWrap="wrap">
+              <Button
+                key="stats-humans"
+                hotkey="h"
+                label={s.humans === 'separate' ? 'Each human' : 'All other humans'}
+                onPress={() =>
+                  void update($, stats, x => ({ ...x, humans: (x.humans === 'separate' ? 'combined' : 'separate') as StatsMode }))
+                }
+              />
+              {people.map(h => (
+                <Button
+                  key={`human-${h}`}
+                  label={`${s.hidden.includes(h) ? '○' : '●'} ${actorLabel(h)}`}
+                  onPress={() =>
+                    void update($, stats, x => ({ ...x, hidden: x.hidden.includes(h) ? x.hidden.filter(y => y !== h) : [...x.hidden, h] }))
+                  }
+                />
+              ))}
+            </Box>
+          )}
           {s.isLoading && (
             <Box marginBottom={1}>
               <Text color="yellow" wrap="wrap">{s.progress || 'Loading...'}</Text>
@@ -577,7 +602,7 @@ export const register: Register = (on, options) => {
             <Box columnGap={2} marginBottom={1} flexWrap="wrap">
               <Svg
                 source={donutSvg(
-                  agg.actors.map(a => ({ label: actorLabel(a.actor), value: a.commits, color: chartColor(a.actor, ais) })),
+                  agg.actors.map(a => ({ label: actorLabel(a.actor), value: a.commits, color: chartColor(a.actor, ais, people) })),
                   `${Math.round(((agg.actors.find(a => a.actor === YOU)?.commits ?? 0) / totalCommits) * 100)}%`,
                   'You, by commits',
                 )}
@@ -587,7 +612,7 @@ export const register: Register = (on, options) => {
                 isInteractive
               />
               <Svg
-                source={legendSvg(agg.actors.map(a => ({ label: actorLabel(a.actor), color: chartColor(a.actor, ais) })), 220)}
+                source={legendSvg(agg.actors.map(a => ({ label: actorLabel(a.actor), color: chartColor(a.actor, ais, people) })), 220)}
                 alt={`Colours: ${agg.actors.map(a => actorLabel(a.actor)).join(', ')}`}
               />
             </Box>
@@ -627,7 +652,7 @@ export const register: Register = (on, options) => {
                   source={barsSvg(
                     agg.repos.slice(0, 10).map(r => ({
                       label: r.repo,
-                      parts: r.actors.map(a => ({ label: actorLabel(a.actor), value: a.commits, color: chartColor(a.actor, ais) })),
+                      parts: r.actors.map(a => ({ label: actorLabel(a.actor), value: a.commits, color: chartColor(a.actor, ais, people) })),
                       note: `${r.prs} PR${r.prs === 1 ? '' : 's'}`,
                     })),
                     Math.max(320, Math.min(640, columns * 7)),
@@ -660,7 +685,7 @@ export const register: Register = (on, options) => {
                       label: w.start.slice(5),
                       parts: Object.entries(w.prs)
                         .sort(([x], [y]) => (x === YOU ? -1 : y === YOU ? 1 : 0))
-                        .map(([actor, value]) => ({ label: actorLabel(actor), value, color: chartColor(actor, ais) })),
+                        .map(([actor, value]) => ({ label: actorLabel(actor), value, color: chartColor(actor, ais, people) })),
                     })),
                     Math.max(320, Math.min(640, columns * 7)),
                   )}

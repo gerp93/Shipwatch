@@ -110,8 +110,10 @@ export type StatsBoard = {
   range: StatsRange
   /** `combined`: You against all AI together. `separate`: You against each AI. */
   mode: StatsMode
-  /** AIs switched off, so the view compares You against only the rest. */
+  /** AIs and humans switched off, so the view compares You against only the rest. */
   hidden: string[]
+  /** `combined`: every other human together as one. `separate`: each human on their own. Combined when absent. */
+  humans?: StatsMode
   prs: PrSummary[]
   repos: RepoCreated[]
   /** The merged-PR history held, as ISO dates: everything merged from `coveredFrom` to `coveredThrough`. */

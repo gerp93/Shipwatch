@@ -5,21 +5,24 @@
 // small stylesheet that follows `prefers-color-scheme`. Every mark carries a <title>, which an interactive
 // SVG shows as a hover tooltip.
 
-import { ALL_AI, AUTOMATION, MIXED, OTHERS, YOU } from './stats'
+import { ALL_AI, AUTOMATION, MIXED, OTHERS, YOU, isHuman } from './stats'
 
 export type ChartPart = { label: string; value: number; color: string }
 
 const AI_PALETTE = ['#4c8dff', '#d9a520', '#2fb8c4', '#e5534b', '#8a7bd8']
+/** Individual humans other than you; none of these is also an AI, You or AI colour. */
+const HUMAN_PALETTE = ['#e07b39', '#d9648f', '#8fb339', '#b08968', '#5f8fa3']
 const GREY = '#8b929c'
 
 /** The SVG limit the Claude engine enforces on one drawing. */
 const MAX_SOURCE = 131072
 
 /** The hex colour an actor is drawn in; matches the terminal colours the text view uses. */
-export function chartColor(actor: string, ais: readonly string[]): string {
+export function chartColor(actor: string, ais: readonly string[], humans: readonly string[] = []): string {
   if (actor === YOU) return '#3fa66b'
   if (actor === ALL_AI) return '#c061cb'
   if (actor === OTHERS || actor === AUTOMATION || actor === MIXED) return GREY
+  if (isHuman(actor)) return HUMAN_PALETTE[Math.max(0, humans.indexOf(actor)) % HUMAN_PALETTE.length]!
   const i = ais.indexOf(actor)
   return AI_PALETTE[(i < 0 ? 0 : i) % AI_PALETTE.length]!
 }

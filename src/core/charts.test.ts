@@ -13,6 +13,9 @@ test('each AI gets its own colour and You, the combined AI and everyone else are
   expect(chartColor('Claude', ais)).not.toBe(chartColor('Cursor', ais))
   expect(chartColor(YOU, ais)).not.toBe(chartColor(ALL_AI, ais))
   expect(chartColor(OTHERS, ais)).toBe('#8b929c')
+  const humans = ['@grant', '@sam']
+  expect(chartColor('@grant', ais, humans)).not.toBe(chartColor('@sam', ais, humans))
+  expect(humans.map(h => chartColor(h, ais, humans))).not.toContain(chartColor(YOU, ais))
 })
 
 test('the donut has one arc per part with a tooltip giving its share, and says the total inside', () => {
@@ -65,7 +68,7 @@ test('the line chart draws one line per series that has data, with a tooltip on 
   const s = linesSvg(labels, [
     { label: 'You', color: '#3fa66b', values: [0, 4, 2] },
     { label: 'Claude', color: '#c061cb', values: [1, 8, 3] },
-    { label: 'Other people', color: '#8b929c', values: [0, 0, 0] },
+    { label: 'Other humans', color: '#8b929c', values: [0, 0, 0] },
   ])
   expect(s.match(/<polyline/g)?.length).toBe(2) // the all-zero series is left out
   expect(s).toContain('<title>2026-10-02 · Claude: 8 commits</title>')

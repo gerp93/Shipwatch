@@ -7,7 +7,7 @@
 import { barsSvg, chartColor, donutSvg, legendSvg, linesSvg, weeksSvg } from '../core/charts'
 import type { ReportData } from '../core/report'
 import { THEME_IDS } from '../core/themes.generated'
-import { RANGES, YOU, actorLabel, aggregate, aisIn, bucketFor, commitSeries, compact, earliestKnown, rangeLabel, rangeSince, reposCreatedSince } from '../core/stats'
+import { RANGES, YOU, actorLabel, aggregate, aisIn, bucketFor, commitSeries, compact, earliestKnown, humansIn, rangeLabel, rangeSince, reposCreatedSince } from '../core/stats'
 import type { Level, PrView, RepoView, StatsMode } from '../core/types'
 import { clockPanel } from './clockPanel'
 
@@ -33,6 +33,7 @@ type State = {
   view: 'dashboard' | 'stats'
   range: (typeof RANGES)[number]
   mode: StatsMode
+  humans: StatsMode
   hidden: string[]
   repo: string | null
   q: string
@@ -47,6 +48,7 @@ const state: State = {
   view: data.board.repos.length > 0 ? 'dashboard' : 'stats',
   range: 365,
   mode: 'combined',
+  humans: 'combined',
   hidden: [],
   repo: null,
   q: '',
@@ -86,6 +88,9 @@ const el = (tag: string, props: Record<string, unknown> = {}, ...kids: Child[]):
   for (const kid of kids) if (kid) node.append(kid)
   return node
 }
+
+/** The width the wide charts are drawn at: the page's content box, so they line up with the tables and text. */
+const chartWidth = (): number => Math.max(320, Math.round(root.clientWidth - 32))
 
 /** A chart: markup from the core's chart functions, which escape everything they were given. */
 const raw = (html: string): HTMLElement => {
@@ -260,7 +265,7 @@ function commitsOverTime(agg: ReturnType<typeof aggregate>, sinceMs: number, col
     'div',
     {},
     el('h3', {}, `Commits per ${per}`, el('span', { class: 'dim' }, ' · by the day their PR merged')),
-    raw(linesSvg(labels, actors.map(a => ({ label: actorLabel(a), color: color(a), values: values[a] ?? [] })), 760, 210)),
+    raw(linesSvg(labels, actors.map(a => ({ label: actorLabel(a), color: color(a), values: values[a] ?? [] })), chartWidth(), 210)),
   )
 }
 
@@ -361,14 +366,15 @@ function statsBanner(): HTMLElement | null {
 function stats(): HTMLElement {
   const s = data.stats
   const ais = aisIn(s.prs)
+  const people = humansIn(s.prs)
   const sinceMs = rangeSince(state.range, data.generatedAt, earliestKnown(s.repos, s.prs))
   const inScope = state.repo ? s.prs.filter(p => p.repo === state.repo) : s.prs
-  const agg = aggregate(inScope, sinceMs, state.mode, state.hidden)
+  const agg = aggregate(inScope, sinceMs, state.mode, state.hidden, state.humans)
   const created = reposCreatedSince(s.repos, sinceMs)
   const sum = (pick: (a: (typeof agg.actors)[number]) => number) => agg.actors.reduce((n, a) => n + pick(a), 0)
   const commits = sum(a => a.commits)
   const you = agg.actors.find(a => a.actor === YOU)?.commits ?? 0
-  const color = (a: string) => chartColor(a, ais)
+  const color = (a: string) => chartColor(a, ais, people)
 
   const setSort = (key: string) => {
     state.sort = { key, dir: state.sort.key === key ? (-state.sort.dir as 1 | -1) : -1 }
@@ -409,6 +415,19 @@ function stats(): HTMLElement {
         }),
       ),
     ),
+    people.length > 0
+      ? el(
+          'div',
+          { class: 'row wrap' },
+          button(state.humans === 'combined' ? 'All other humans' : 'Each human', true, () => ((state.humans = state.humans === 'combined' ? 'separate' : 'combined'), draw())),
+          ...people.map(h =>
+            button(`${state.hidden.includes(h) ? '○' : '●'} ${actorLabel(h)}`, !state.hidden.includes(h), () => {
+              state.hidden = state.hidden.includes(h) ? state.hidden.filter(x => x !== h) : [...state.hidden, h]
+              draw()
+            }),
+          ),
+        )
+      : null,
     state.repo
       ? el('div', { class: 'row' }, el('span', { class: 'chip' }, `Repo: ${state.repo}`, el('button', { class: 'x', title: 'Show every repo', onclick: () => ((state.repo = null), draw()) }, '×')))
       : null,
@@ -428,7 +447,7 @@ function stats(): HTMLElement {
           raw(donutSvg(agg.actors.map(a => ({ label: actorLabel(a.actor), value: a.commits, color: color(a.actor) })), `${Math.round((you / commits) * 100)}%`, 'You, by commits')),
           el(
             'div',
-            {},
+            { class: 'fill' },
             raw(legendSvg(agg.actors.map(a => ({ label: actorLabel(a.actor), color: color(a.actor) })), 260)),
             el(
               'table',
@@ -469,7 +488,7 @@ function stats(): HTMLElement {
                   .sort(([x], [y]) => (x === YOU ? -1 : y === YOU ? 1 : 0))
                   .map(([actor, value]) => ({ label: actorLabel(actor), value, color: color(actor) })),
               })),
-              760,
+              chartWidth(),
               170,
             ),
           ),
@@ -487,7 +506,7 @@ function stats(): HTMLElement {
                 parts: r.actors.map(a => ({ label: actorLabel(a.actor), value: a.commits, color: color(a.actor) })),
                 note: `${r.prs} PR${r.prs === 1 ? '' : 's'}`,
               })),
-              760,
+              chartWidth(),
             ),
           ),
           el(
@@ -602,6 +621,19 @@ function drawKeepFocus(selector: string): void {
 }
 
 draw()
+
+// The charts are drawn at the page's width, so a resized window redraws the Stats tab to fit.
+let drawnWidth = chartWidth()
+let resizeTimer: ReturnType<typeof setTimeout> | undefined
+window.addEventListener('resize', () => {
+  clearTimeout(resizeTimer)
+  resizeTimer = setTimeout(() => {
+    const w = chartWidth()
+    if (w === drawnWidth) return
+    drawnWidth = w
+    if (state.view === 'stats') draw()
+  }, 150)
+})
 
 /**
  * What the host calls to fill the stats in after the page is up: `setStats` with the history so far (the page

@@ -7,7 +7,7 @@ import { fetchMergedPrs, fetchReposCreated, fetchViewerLogin } from './statsFetc
 import type { PrSummary, RepoCreated, StatsBoard } from './types'
 
 /** Bump when what a stored PR summary holds changes, so old ones are fetched again. */
-export const STATS_VERSION = 1
+export const STATS_VERSION = 2
 /** Stats younger than this are not fetched again just because they were asked for. */
 export const STATS_FRESH_MS = 10 * 60_000
 /** What is worth keeping between sessions. */

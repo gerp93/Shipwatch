@@ -72,10 +72,12 @@ today, so "365 days" is the year up to now, not a calendar year:
   your own account, so who opened a PR says nothing. Each commit is attributed by its author
   and its `Co-Authored-By` lines to You, or to the AI named there. Known AIs are recognized by
   name (Claude, Copilot, Cursor, Codex, Gemini and others); any other `[bot]` account is named
-  by its own login; the `aiNames` option adds more. **Other people** is its own share: commits by
-  humans who are not you, never other AIs. Chore bots (Dependabot and the like) are left out entirely.
+  by its own login; the `aiNames` option adds more. **Other humans** is their own share: commits
+  by people who are not you, never other AIs. Chore bots (Dependabot and the like) are left out entirely.
 - **You vs all AI, or you vs each AI.** One button folds every AI into one bar or splits them;
   each AI has its own switch, so you can compare you against just Claude, for instance.
+- **Other humans, together or each.** The same two controls exist for people who are not you: one
+  button folds them into **Other humans** or splits them by GitHub login, and each human has a switch.
 - **It is a label, not a measurement of who typed the code.** "You" means a commit with no AI
   marker, which includes AI work committed without one. Lines are added and removed in commits,
   so a commit that rewrites an earlier one counts again.
