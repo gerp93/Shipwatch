@@ -29,6 +29,7 @@ export type RawRepo = {
     target?: { oid?: string; committedDate?: string; statusCheckRollup?: RawRollup }
   } | null
   latestRelease?: { tagName: string; publishedAt: string } | null
+  releases?: { totalCount?: number } | null
   pullRequests?: { nodes?: RawPr[] }
 }
 
@@ -136,6 +137,7 @@ const classify = (raw: RawRepo, now: number, recentMs: number, activeMs: number)
     branch: raw.defaultBranchRef?.name ?? '',
     headOid: target?.oid ?? '',
     release,
+    releases: raw.releases?.totalCount ?? 0,
     prs,
     activity: [] as RepoView['activity'],
     isStale: false,

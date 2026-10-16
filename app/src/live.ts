@@ -12,6 +12,9 @@ const call = (method: string, ...args: unknown[]): string => `window.shipwatchLi
 /** The stats history so far. */
 export const setStatsScript = (stats: ReportData['stats']): string => call('setStats', stats)
 
+/** Session time and tokens per repo, read from Claude Code's history, for the Builds tab. */
+export const setEffortScript = (effort: NonNullable<ReportData['effort']>): string => call('setEffort', effort)
+
 /** How loading the stats is going; `null` says it is finished. */
 export const setStatusScript = (status: StatsStatus | null): string => call('setStatus', status)
 

@@ -59,6 +59,8 @@ export type RepoView = {
   branch: string
   headOid: string
   release: { tag: string; publishedAt: string } | null
+  /** How many releases the repo has published; absent in a dashboard saved before this was read. */
+  releases?: number
   prs: PrView[]
   /** Workflow runs in flight: `text` is `name · branch`, `url` the run's page on GitHub (may be empty). */
   activity: Array<{ text: string; url: string }>
@@ -124,4 +126,20 @@ export type StatsBoard = {
   progress: string
   error: string | null
   updatedAt: number
+}
+
+/**
+ * What building a repo took, as far as this computer's Claude Code history shows (the folder of session
+ * transcripts Claude Code keeps). Only a host that can read that folder supplies it; see effort.ts.
+ */
+export type RepoEffort = {
+  /** Time spent in sessions on the repo, in ms: the gaps between one event and the next, when they are short. */
+  activeMs: number
+  /** Sessions that touched the repo. */
+  sessions: number
+  /** Tokens the AI took in and wrote: new input, output and cache writes (re-reading the cache is not counted). */
+  tokens: number
+  /** The first and last event in any of those sessions, epoch ms. */
+  firstAt: number
+  lastAt: number
 }

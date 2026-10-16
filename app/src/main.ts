@@ -20,7 +20,8 @@ import { FileStore, nodeIO } from './adapters'
 import { HOUR_MS, RateLimited, collectDashboard, collectStats, loadSavedDashboard, saveDashboard, savedStats } from './collect'
 import type { CollectDeps, DashboardRead } from './collect'
 import { readConfig } from './config'
-import { setApiScript, setBoardScript, setBoardStatusScript, setNextRefreshScript, setRecentScript, setStatsScript, setStatusScript, throttled } from './live'
+import { readEffort, transcriptsDir } from './effort'
+import { setApiScript, setBoardScript, setBoardStatusScript, setEffortScript, setNextRefreshScript, setRecentScript, setStatsScript, setStatusScript, throttled } from './live'
 import { closeFromReport, mergeFromReport } from './merge'
 import { errorPage, isSafeExternalUrl, loadingPage, progressFraction } from './pages'
 import { checkForUpdatesNow, setupAutoUpdater } from './updates'
@@ -124,6 +125,25 @@ async function loadStatsInBackground(deps: CollectDeps, read: DashboardRead): Pr
   }
 }
 
+/**
+ * Session time and tokens per repo, from Claude Code's transcripts on this computer, for the Builds tab. Read in the
+ * background (the first read parses every transcript; later ones only the files that changed) and handed to the page.
+ */
+let lastEffort: ReportData['effort']
+let isReadingEffort = false
+async function loadEffortInBackground(repoNames: readonly string[]): Promise<void> {
+  if (isReadingEffort) return
+  isReadingEffort = true
+  try {
+    lastEffort = await readEffort(transcriptsDir(), repoNames, userFile('effort.json'))
+    toPage(setEffortScript(lastEffort))
+  } catch {
+    // The Builds tab then shows what GitHub holds, without session time.
+  } finally {
+    isReadingEffort = false
+  }
+}
+
 /** True once the report is on screen: from then on, updates happen behind it and never replace it with a loading screen. */
 let reportShown = false
 let lastRead: DashboardRead | undefined
@@ -150,6 +170,7 @@ async function showReport(
     statsStatus: isLoadingStats ? (statsStatus ?? undefined) : undefined,
     boardStatus: what.boardStatus,
     recentPrs: what.recent,
+    effort: lastEffort,
     api: lastApi,
     nextRefreshAt,
     logo: await readLogo(),
@@ -224,6 +245,8 @@ async function refresh(): Promise<void> {
       return
     }
     lastRead = read
+    const known = (await savedStats(deps, read.owner)).repos.map(r => r.name)
+    void loadEffortInBackground([...read.repos.map(r => r.name), ...known])
     await saveDashboard(userFile('board.json'), { owner: read.owner, repos: read.repos, recent: read.recent, at: deps.now })
     if (behind) {
       onScreen = { owner: read.owner, prs: new Set(read.repos.flatMap(r => r.prs.map(p => `${r.name}#${p.number}`))) }

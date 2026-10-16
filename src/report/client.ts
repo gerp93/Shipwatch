@@ -5,6 +5,9 @@
 // Bundled by scripts/build-report.mjs into src/core/reportClient.generated.ts. Do not import a host API.
 
 import { barsSvg, chartColor, donutSvg, legendSvg, linesSvg, weeksSvg } from '../core/charts'
+import { ACTIVE_GAP_MS } from '../core/effort'
+import { buildProfiles, spanLabel, tokenLabel } from '../core/profile'
+import type { BuildProfile } from '../core/profile'
 import type { ReportData } from '../core/report'
 import { THEME_IDS } from '../core/themes.generated'
 import { RANGES, YOU, actorLabel, aggregate, aisIn, bucketFor, commitSeries, compact, earliestKnown, hiddenInView, humansIn, rangeLabel, rangeSince, reposCreatedSince } from '../core/stats'
@@ -39,7 +42,7 @@ const STEP_NAMES = ['PR', 'Build', 'Merged', 'Released']
 type Sort = { key: string; dir: 1 | -1 }
 
 type State = {
-  view: 'dashboard' | 'stats'
+  view: 'dashboard' | 'stats' | 'builds'
   range: (typeof RANGES)[number]
   mode: StatsMode
   humans: StatsMode
@@ -52,6 +55,7 @@ type State = {
   drafts: boolean
   sort: Sort
   dashSort: Sort
+  buildSort: Sort
 }
 
 const state: State = {
@@ -66,6 +70,7 @@ const state: State = {
   drafts: storedDrafts(),
   sort: { key: 'commits', dir: -1 },
   dashSort: { key: 'level', dir: 1 },
+  buildSort: { key: 'last', dir: -1 },
 }
 
 // Whether to include drafts is remembered between visits; storage can be unavailable, so it is optional.
@@ -635,6 +640,121 @@ function stats(): HTMLElement {
 
 // ---- Page --------------------------------------------------------------------------------------------------
 
+/**
+ * The Builds tab: every app's profile side by side, to compare how long each took to get where it is. What went in
+ * (calendar days, days with work, and, when the app can read Claude Code's history, session time and tokens) against
+ * what it came to (PRs, commits, lines, releases). A row opens that repo's stats.
+ */
+function builds(): HTMLElement {
+  const releases: Record<string, number> = {}
+  for (const r of data.board.repos) if (typeof r.releases === 'number') releases[r.name] = r.releases
+  const list = buildProfiles(data.stats.prs, data.stats.repos, data.effort, releases)
+  const withEffort = !!data.effort && Object.keys(data.effort).length > 0
+  const hours = (p: BuildProfile): number => (p.effort ? p.effort.activeMs / 3_600_000 : -1)
+  const keyOf: Record<string, (p: BuildProfile) => string | number> = {
+    repo: p => p.repo.toLowerCase(),
+    started: p => p.startedAt,
+    last: p => p.lastMergeAt,
+    calendar: p => p.calendarDays,
+    days: p => p.activeDays,
+    time: hours,
+    tokens: p => p.effort?.tokens ?? -1,
+    prs: p => p.prs,
+    commits: p => p.commits,
+    ai: p => p.aiShare,
+    lines: p => p.netLines,
+    releases: p => p.releases ?? -1,
+    rate: p => p.linesPerHour ?? -1,
+  }
+  const pick = keyOf[state.buildSort.key] ?? keyOf.last!
+  const rows = [...list].sort((a, b) => compare(pick(a), pick(b)) * state.buildSort.dir)
+  const setSort = (key: string) => {
+    state.buildSort = { key, dir: state.buildSort.key === key ? (-state.buildSort.dir as 1 | -1) : -1 }
+    draw()
+  }
+  const sum = (pickN: (p: BuildProfile) => number) => list.reduce((n, p) => n + pickN(p), 0)
+  const tile = (n: string, label: string) => el('div', { class: 'tile' }, el('div', { class: 'big' }, n), el('div', { class: 'dim' }, label))
+  const maxDays = Math.max(1, ...list.map(p => p.calendarDays))
+  const maxHours = Math.max(0.01, ...list.map(hours))
+  const bar = (fraction: number) => el('div', { class: 'bar' }, el('i', { style: `width:${Math.max(2, Math.round(fraction * 100))}%` }))
+  const cell = (text: string, fraction?: number) => el('td', {}, text, fraction === undefined ? null : bar(fraction))
+  const head = (label: string, key: string, title: string) => {
+    const t = th(label, key, state.buildSort, setSort)
+    t.title = title
+    return t
+  }
+
+  return el(
+    'section',
+    {},
+    el('p', { class: 'dim' }, 'How long each app took to get where it is, against what it came to. Click a row for that repo’s stats.'),
+    el(
+      'div',
+      { class: 'tiles' },
+      tile(String(list.length), 'apps'),
+      withEffort ? tile(spanLabel(sum(p => p.effort?.activeMs ?? 0)), 'session time with Claude Code') : null,
+      withEffort ? tile(tokenLabel(sum(p => p.effort?.tokens ?? 0)), 'AI tokens') : null,
+      tile(String(sum(p => p.prs)), 'PRs merged'),
+      tile(compact(sum(p => p.netLines)), 'net lines'),
+    ),
+    withEffort
+      ? null
+      : el(
+          'p',
+          { class: 'dim' },
+          'Session time and tokens come from Claude Code’s history on this computer, which only the Shipwatch app reads; this view shows what GitHub holds.',
+        ),
+    list.length === 0
+      ? el('p', { class: 'dim' }, 'Nothing merged yet, so there is nothing to profile.')
+      : el(
+          'table',
+          {},
+          el(
+            'thead',
+            {},
+            el(
+              'tr',
+              {},
+              head('App', 'repo', 'The repository'),
+              head('Started', 'started', 'When the repository was created'),
+              head('Calendar', 'calendar', 'Days from the repository’s creation to its last merged PR'),
+              head('Days worked', 'days', 'Days on which a PR merged'),
+              withEffort ? head('Session time', 'time', `Time in Claude Code sessions on this computer; a break of more than ${ACTIVE_GAP_MS / 60_000} minutes is not counted`) : null,
+              withEffort ? head('Tokens', 'tokens', 'Tokens the AI took in and wrote (new input, output and cache writes)') : null,
+              head('PRs', 'prs', 'Pull requests merged'),
+              head('Commits', 'commits', 'Commits in those PRs, automation left out'),
+              head('AI', 'ai', 'Share of those commits with an AI named on them'),
+              head('Net lines', 'lines', 'Lines added less lines removed'),
+              head('Releases', 'releases', 'Releases published'),
+              withEffort ? head('Lines/hour', 'rate', 'Net lines per hour of session time') : null,
+            ),
+          ),
+          el(
+            'tbody',
+            {},
+            ...rows.map(p =>
+              el(
+                'tr',
+                { class: 'click', onclick: () => ((state.repo = p.repo), (state.view = 'stats'), draw()) },
+                el('td', {}, p.repo),
+                cell(p.startedAt ? new Date(p.startedAt).toLocaleDateString() : '–'),
+                cell(p.calendarDays ? `${p.calendarDays} d` : '–', p.calendarDays / maxDays),
+                cell(String(p.activeDays)),
+                withEffort ? cell(p.effort ? spanLabel(p.effort.activeMs) : '–', p.effort ? hours(p) / maxHours : undefined) : null,
+                withEffort ? cell(p.effort ? tokenLabel(p.effort.tokens) : '–') : null,
+                cell(String(p.prs)),
+                cell(String(p.commits)),
+                cell(p.commits > 0 ? `${Math.round(p.aiShare * 100)}%` : '–'),
+                cell(compact(p.netLines)),
+                cell(p.releases === undefined ? '–' : String(p.releases)),
+                withEffort ? cell(p.linesPerHour === undefined ? '–' : compact(Math.round(p.linesPerHour))) : null,
+              ),
+            ),
+          ),
+        ),
+  )
+}
+
 const root = document.getElementById('app')!
 
 // A VisualAssault theme is chosen from the header and remembered; storage can be unavailable, so it is optional.
@@ -678,15 +798,16 @@ function draw(): void {
         ...THEME_IDS.map(id => el('option', { value: id, selected: id === document.body.className ? 'selected' : undefined }, themeLabel(id))),
       ),
     ),
-    // The two views are tabs: one row of their own, two equal columns across the full width.
+    // The views are tabs: one row of their own, equal columns across the full width.
     el(
       'nav',
       { class: 'tabs', role: 'tablist' },
       tab('Dashboard', state.view === 'dashboard', () => ((state.view = 'dashboard'), draw())),
       tab(data.statsStatus?.state === 'loading' ? 'Stats (loading...)' : 'Stats', state.view === 'stats', () => ((state.view = 'stats'), draw())),
+      tab('Builds', state.view === 'builds', () => ((state.view = 'builds'), draw())),
     ),
     ...(data.boardStatus || data.statsStatus ? [statusBanner()!] : []),
-    state.view === 'dashboard' ? dashboard() : stats(),
+    state.view === 'dashboard' ? dashboard() : state.view === 'builds' ? builds() : stats(),
   )
 }
 
@@ -725,6 +846,11 @@ window.addEventListener('resize', () => {
   setStats(stats: ReportData['stats']): void {
     data.stats = stats
     draw()
+  },
+  /** Session time and tokens read from Claude Code's history; the Builds tab picks them up. */
+  setEffort(effort: NonNullable<ReportData['effort']>): void {
+    data.effort = effort
+    if (state.view === 'builds') draw()
   },
   /** A freshly read dashboard replaces the saved one on screen; the tab, filters and sort stay as they are. */
   setBoard(board: ReportData['board'], generatedAt: number, recent: ReportData['recentPrs'] | null): void {

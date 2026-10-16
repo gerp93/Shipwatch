@@ -12,6 +12,7 @@ query($owner:String!,$n:Int!,$fork:Boolean){
         name isArchived isFork pushedAt url
         defaultBranchRef{ name target{ ... on Commit{ oid committedDate statusCheckRollup{ state contexts(first:30){ nodes{ ... on CheckRun{ status conclusion } ... on StatusContext{ state } } } } } } }
         latestRelease{ tagName publishedAt }
+        releases(first:1){ totalCount }
         pullRequests(states:OPEN, first:10, orderBy:{field:UPDATED_AT,direction:DESC}){
           nodes{
             number title url isDraft headRefName updatedAt mergeable
