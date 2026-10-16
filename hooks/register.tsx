@@ -27,6 +27,7 @@ import {
   barCells,
   compact,
   earliestKnown,
+  hiddenInView,
   humansIn,
   isHuman,
   rangeLabel,
@@ -478,7 +479,7 @@ export const register: Register = (on, options) => {
     /** The Stats view: who the shipped work is attributed to, by PR, commit and line, over a chosen range. */
     const statsTree = () => {
       const sinceMs = rangeSince(s.range, now, earliestKnown(s.repos, s.prs))
-      const agg = aggregate(s.prs, sinceMs, s.mode, s.hidden, s.humans)
+      const agg = aggregate(s.prs, sinceMs, s.mode, hiddenInView(s.hidden, s.mode, s.humans ?? 'combined'), s.humans)
       const ais = aisIn(s.prs)
       const people = humansIn(s.prs)
       const created = reposCreatedSince(s.repos, sinceMs)
@@ -534,12 +535,12 @@ export const register: Register = (on, options) => {
             <Button
               key="stats-mode"
               hotkey="m"
-              label={s.mode === 'combined' ? 'You vs all AI' : 'You vs each AI'}
+              label={s.mode === 'combined' ? 'All AIs' : 'Each AI'}
               onPress={() =>
                 void update($, stats, x => ({ ...x, mode: (x.mode === 'combined' ? 'separate' : 'combined') as StatsMode }))
               }
             />
-            {ais.map(ai => (
+            {(s.mode === 'separate' ? ais : []).map(ai => (
               <Button
                 key={`ai-${ai}`}
                 label={`${s.hidden.includes(ai) ? '○' : '●'} ${ai}`}
@@ -559,7 +560,7 @@ export const register: Register = (on, options) => {
                   void update($, stats, x => ({ ...x, humans: (x.humans === 'separate' ? 'combined' : 'separate') as StatsMode }))
                 }
               />
-              {people.map(h => (
+              {(s.humans === 'separate' ? people : []).map(h => (
                 <Button
                   key={`human-${h}`}
                   label={`${s.hidden.includes(h) ? '○' : '●'} ${actorLabel(h)}`}

@@ -269,6 +269,13 @@ export const commitSeries = (
   return { labels, values }
 }
 
+/**
+ * The switched-off AIs and humans that count in a view: a switch is only offered, and only applies, while its group
+ * is shown one by one. Folded into "all AIs" or "all other humans", everyone in it counts.
+ */
+export const hiddenInView = (hidden: readonly string[], mode: StatsMode, humans: StatsMode): string[] =>
+  hidden.filter(h => (isHuman(h) ? humans === 'separate' : mode === 'separate'))
+
 /** Every AI named anywhere in the PRs (so each can get its own switch), most active first. */
 export const aisIn = (prs: readonly PrSummary[]): string[] => {
   const commits = new Map<string, number>()

@@ -7,7 +7,7 @@
 import { barsSvg, chartColor, donutSvg, legendSvg, linesSvg, weeksSvg } from '../core/charts'
 import type { ReportData } from '../core/report'
 import { THEME_IDS } from '../core/themes.generated'
-import { RANGES, YOU, actorLabel, aggregate, aisIn, bucketFor, commitSeries, compact, earliestKnown, humansIn, rangeLabel, rangeSince, reposCreatedSince } from '../core/stats'
+import { RANGES, YOU, actorLabel, aggregate, aisIn, bucketFor, commitSeries, compact, earliestKnown, hiddenInView, humansIn, rangeLabel, rangeSince, reposCreatedSince } from '../core/stats'
 import type { Level, PrView, RepoView, StatsMode } from '../core/types'
 import { clockPanel } from './clockPanel'
 
@@ -433,7 +433,7 @@ function stats(): HTMLElement {
   const people = humansIn(s.prs)
   const sinceMs = rangeSince(state.range, data.generatedAt, earliestKnown(s.repos, s.prs))
   const inScope = state.repo ? s.prs.filter(p => p.repo === state.repo) : s.prs
-  const agg = aggregate(inScope, sinceMs, state.mode, state.hidden, state.humans)
+  const agg = aggregate(inScope, sinceMs, state.mode, hiddenInView(state.hidden, state.mode, state.humans), state.humans)
   const created = reposCreatedSince(s.repos, sinceMs)
   const sum = (pick: (a: (typeof agg.actors)[number]) => number) => agg.actors.reduce((n, a) => n + pick(a), 0)
   const commits = sum(a => a.commits)
@@ -470,8 +470,9 @@ function stats(): HTMLElement {
     el(
       'div',
       { class: 'row wrap' },
-      button(state.mode === 'combined' ? 'You vs all AI' : 'You vs each AI', true, () => ((state.mode = state.mode === 'combined' ? 'separate' : 'combined'), draw())),
-      ...ais.map(ai =>
+      button(state.mode === 'combined' ? 'All AIs' : 'Each AI', true, () => ((state.mode = state.mode === 'combined' ? 'separate' : 'combined'), draw())),
+      // One switch per AI, only while they are shown one by one.
+      ...(state.mode === 'separate' ? ais : []).map(ai =>
         button(`${state.hidden.includes(ai) ? '○' : '●'} ${ai}`, !state.hidden.includes(ai), () => {
           state.hidden = state.hidden.includes(ai) ? state.hidden.filter(h => h !== ai) : [...state.hidden, ai]
           draw()
@@ -483,7 +484,7 @@ function stats(): HTMLElement {
           'div',
           { class: 'row wrap' },
           button(state.humans === 'combined' ? 'All other humans' : 'Each human', true, () => ((state.humans = state.humans === 'combined' ? 'separate' : 'combined'), draw())),
-          ...people.map(h =>
+          ...(state.humans === 'separate' ? people : []).map(h =>
             button(`${state.hidden.includes(h) ? '○' : '●'} ${actorLabel(h)}`, !state.hidden.includes(h), () => {
               state.hidden = state.hidden.includes(h) ? state.hidden.filter(x => x !== h) : [...state.hidden, h]
               draw()
