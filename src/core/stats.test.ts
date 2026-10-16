@@ -17,6 +17,7 @@ import {
   commitSeries,
   compact,
   earliestKnown,
+  hiddenInView,
   humansIn,
   isAi,
   rangeLabel,
@@ -283,4 +284,12 @@ test('other humans fold into one, or stand on their own, and each can be hidden'
   expect(share(aggregate(prs, 0, 'combined', ['@sam'], 'separate'))).toEqual({ You: 1, '@grant': 5 })
   expect(share(aggregate(prs, 0, 'combined', ['@sam']))).toEqual({ You: 1, Others: 5 })
   expect(humansIn(prs)).toEqual(['@grant', '@sam'])
+})
+
+test('a hidden AI or human only counts while its group is shown one by one', () => {
+  const hidden = ['Claude', '@sam']
+  expect(hiddenInView(hidden, 'combined', 'combined')).toEqual([])
+  expect(hiddenInView(hidden, 'separate', 'combined')).toEqual(['Claude'])
+  expect(hiddenInView(hidden, 'combined', 'separate')).toEqual(['@sam'])
+  expect(hiddenInView(hidden, 'separate', 'separate')).toEqual(['Claude', '@sam'])
 })
