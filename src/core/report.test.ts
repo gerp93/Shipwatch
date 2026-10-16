@@ -77,3 +77,13 @@ test('a page made while stats are still loading says so, and can be filled in af
   expect(html).toContain('setStatus')
   expect(renderReport(data())).not.toContain('"statsStatus"')
 })
+
+test('merged has a purple of its own that a theme does not remap', () => {
+  const html = renderReport(data())
+  expect(html).toContain('--merged:#8250df') // light
+  expect(html).toContain('--merged:#a371f7') // dark
+  const themed = /body\[class\$="-theme"\]\{([^}]*)\}/.exec(html)![1]!
+  expect(themed).not.toContain('--merged') // the theme re-points the other status colours at its own tokens, but not this one
+  expect(html).toContain('.step.merged.done{color:var(--merged)')
+  expect(html).toContain('.pill.recent{background:var(--merged)}')
+})

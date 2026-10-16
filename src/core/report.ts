@@ -53,9 +53,9 @@ export const jsonForScript = (value: unknown): string =>
 
 const CSS = `
 :root{--bg:#fff;--fg:#1f2328;--dim:#656d76;--line:#d0d7de;--card:#f6f8fa;--accent:#0969da;--on:#0969da;--onfg:#fff;
---fail:#cf222e;--running:#9a6700;--ready:#1a7f37;--pending:#8250df;--draft:#6e7781;--idle:#8c959f}
+--fail:#cf222e;--running:#9a6700;--ready:#1a7f37;--pending:#8250df;--merged:#8250df;--draft:#6e7781;--idle:#8c959f}
 @media (prefers-color-scheme:dark){:root{--bg:#0d1117;--fg:#e6edf3;--dim:#8d96a0;--line:#30363d;--card:#161b22;--accent:#58a6ff;--on:#1f6feb;--onfg:#fff;
---fail:#f85149;--running:#d29922;--ready:#3fb950;--pending:#a371f7;--draft:#8b949e;--idle:#6e7681}}
+--fail:#f85149;--running:#d29922;--ready:#3fb950;--pending:#a371f7;--merged:#a371f7;--draft:#8b949e;--idle:#6e7681}}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.45 system-ui,sans-serif}
 #app{max-width:1100px;margin:0 auto;padding:16px}
 h1{font-size:20px;margin:0}h3{margin:22px 0 8px;font-size:15px}
@@ -70,10 +70,10 @@ table.compact{width:100%;min-width:340px}.fill{flex:1;min-width:340px}
 .tiles{display:flex;gap:12px;flex-wrap:wrap;margin:12px 0}.tile{flex:1 1 130px;background:var(--card);border:1px solid var(--line);border-radius:8px;padding:10px 16px;min-width:130px}
 .big{font-size:22px;font-weight:600}
 .pill{display:inline-block;padding:1px 8px;border-radius:10px;font-size:12px;color:#fff;background:var(--idle);white-space:nowrap}
-.pill.fail{background:var(--fail)}.pill.running{background:var(--running)}.pill.ready{background:var(--ready)}.pill.pending{background:var(--pending)}.pill.draft{background:var(--draft)}.pill.recent{background:var(--pending)}
+.pill.fail{background:var(--fail)}.pill.running{background:var(--running)}.pill.ready{background:var(--ready)}.pill.pending{background:var(--pending)}.pill.draft{background:var(--draft)}.pill.recent{background:var(--merged)}
 .steps{display:flex;flex-wrap:wrap;gap:6px}td.where{min-width:270px}
 .step{display:inline-block;font-size:12px;line-height:18px;padding:0 7px;border-radius:4px;border:1px solid var(--line);color:var(--dim);white-space:nowrap}
-.step.done{color:var(--ready);border-color:var(--ready)}.step.merged.done{color:var(--pending);border-color:var(--pending)}.step.released.done{color:var(--accent);border-color:var(--accent)}.step.running{color:var(--running);border-color:var(--running)}.step.failed{color:var(--fail);border-color:var(--fail)}
+.step.done{color:var(--ready);border-color:var(--ready)}.step.merged.done{color:var(--merged);border-color:var(--merged)}.step.released.done{color:var(--accent);border-color:var(--accent)}.step.running{color:var(--running);border-color:var(--running)}.step.failed{color:var(--fail);border-color:var(--fail)}
 .dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px}
 .chip{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:2px 4px 2px 10px}.x{font:inherit;background:none;border:0;color:var(--dim);cursor:pointer;padding:0 6px}
 .svg{max-width:100%;overflow-x:auto}.svg svg{max-width:100%;height:auto}
@@ -88,7 +88,7 @@ label.check{display:inline-flex;align-items:center;gap:4px;color:var(--dim);curs
 .chip-api.low{color:var(--running);border-color:var(--running)}.chip-api.critical{color:var(--fail);border-color:var(--fail)}
 .logo{height:36px;width:auto;margin-right:4px}select.theme{font:inherit;background:var(--card);color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:4px 8px}
 /* Charts take their text colour from the page so they stay readable on any theme. */
-body{--chart-fg:var(--fg);--chart-strong:var(--fg);--chart-dim:var(--dim);--clock-a:var(--accent);--clock-b:var(--pending)}
+body{--chart-fg:var(--fg);--chart-strong:var(--fg);--chart-dim:var(--dim);--clock-a:var(--accent);--clock-b:var(--merged)}
 /* A VisualAssault theme (a body class from the vendored sheet below) re-points the page's own colours at the shared tokens. */
 body[class$="-theme"]{--bg:var(--color-bg);--fg:var(--color-text);--dim:var(--color-text-muted);--line:var(--color-border);--card:var(--color-surface);
 --accent:var(--color-accent-blue);--on:var(--color-primary-action);--onfg:var(--color-primary-action-text,var(--color-text));
