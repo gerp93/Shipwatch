@@ -84,3 +84,9 @@ test('line chart text from GitHub is escaped', () => {
   expect(s).not.toContain('<b>')
   expect(s).toContain('a&amp;b')
 })
+
+test('the first and last labels of the weekly chart stay inside the drawing', () => {
+  const cols = Array.from({ length: 60 }, (_, i) => ({ label: `2015-${String((i % 12) + 1).padStart(2, '0')}`, parts: [{ label: 'You', value: 1, color: '#3fa66b' }] }))
+  const s = weeksSvg(cols, 760, 170)
+  expect(s).toContain('text-anchor="start">2015-01</text>')
+})
