@@ -1,13 +1,14 @@
 import { atom, read, update } from 'claude-code'
 import type { Register } from 'claude-code'
 
-import { ago, failedOnMain, fixPrompt, snapshot, transitionEvents } from '../src/core/analyze'
+import { ago, failedOnMain, fixPrompt, snapshot, transitions } from '../src/core/analyze'
 import type { Seen } from '../src/core/analyze'
 import { buildBoard } from '../src/core/boardService'
 import { barsSvg, chartColor, donutSvg, legendSvg, weeksSvg } from '../src/core/charts'
 import type { InfraVerdicts } from '../src/core/boardService'
 import { adviseOnLimit, isRateLimit, pace, throttleNote } from '../src/core/budget'
 import type { ApiLimits, Budget } from '../src/core/budget'
+import { claimFix } from '../src/core/fixClaims'
 import { connect, fetchLimitStatus, resolveOwner } from '../src/core/github'
 import { fetchRecentPrs } from '../src/core/recent'
 import { openArgv, renderReport } from '../src/core/report'
@@ -115,20 +116,6 @@ const infraVerdicts: InfraVerdicts = new Map()
 let isLoadingStats = false
 let timer: { cancel: () => void } | undefined
 
-const readStoreSet = async ($: any, key: string): Promise<Set<string>> => {
-  const raw = await $.store.get(key)
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return new Set()
-  return new Set(Object.keys(raw as Record<string, unknown>))
-}
-
-const writeStoreSet = async ($: any, key: string, values: Set<string>): Promise<void> => {
-  await $.store.set(key, Object.fromEntries([...values].map(v => [v, true])))
-}
-
-const readPromptState = async ($: any): Promise<Set<string>> => readStoreSet($, 'shipwatch:prompted')
-
-const readToastState = async ($: any): Promise<Set<string>> => readStoreSet($, 'shipwatch:toasted')
-
 async function refresh($: any): Promise<number> {
   if (isPolling) return cfg.idleMs
   isPolling = true
@@ -158,31 +145,30 @@ async function refresh($: any): Promise<number> {
       infraVerdicts,
     )
 
-    const toasted = await readToastState($)
-    for (const event of transitionEvents(seen, repos)) {
-      if (toasted.has(event.key)) continue
-      $.ui.toast(event.line)
-      toasted.add(event.key)
-    }
-    await writeStoreSet($, 'shipwatch:toasted', toasted)
-
+    for (const line of transitions(seen, repos)) $.ui.toast(line)
     if (cfg.autoFix) {
-      const promptedNow = await readPromptState($)
+      // Every open session sees the same failure; the store's claim lets exactly one of them prompt.
+      const session: string = await $.session.id()
       for (const r of failedOnMain(seen, repos)) {
-        const key = `${r.name}:${r.headOid}`
-        if (promptedNow.has(key) || promptedNow.size >= cfg.autoFixLimit) continue
-        promptedNow.add(key)
         const text = fixPrompt(resolvedOwner, r)
         if (!text) {
           $.ui.toast(`Shipwatch: ${r.name} main build failed (unusual name, not auto-fixing)`)
           continue
         }
-        const used = promptedNow.size
-        $.ui.toast(`Shipwatch: asking Claude to look into ${r.name} main (${used}/${cfg.autoFixLimit})`)
+        const claim = await claimFix($.store, {
+          repo: r.name,
+          commit: r.headOid,
+          session,
+          now,
+          limit: cfg.autoFixLimit,
+          wait: ms => $.clock.sleep(ms),
+        })
+        if (claim === 'limit') $.ui.toast(`Shipwatch: ${r.name} main build failed (auto-fix limit of ${cfg.autoFixLimit} reached)`)
+        if (claim !== 'won') continue
+        $.ui.toast(`Shipwatch: asking Claude to look into ${r.name} main`)
         // Queued: it starts its own turn once this session is idle.
         void $.prompt.submit({ text })
       }
-      await writeStoreSet($, 'shipwatch:prompted', promptedNow)
     }
     seen = snapshot(repos)
     $.ui.status(statusLine(repos))

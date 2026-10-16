@@ -1,7 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 
 import { NOT_FOR_MERGE, isParked } from './parked'
-import { analyze, checksOf, failedOnMain, fixPrompt, isInfraMessage, markInfra, snapshot, transitionEvents, transitions } from './analyze'
+import { analyze, checksOf, failedOnMain, fixPrompt, isInfraMessage, markInfra, snapshot, transitions } from './analyze'
 import type { RawRepo } from './analyze'
 
 const NOW = Date.parse('2026-10-05T12:00:00Z')
@@ -71,14 +71,6 @@ test('transitions toast a settled build and a new release, but never on the firs
   expect(transitions({}, running)).toEqual([])
   const done = [analyze(repo({ head: 'SUCCESS', latestRelease: { tagName: 'v2', publishedAt: '2026-10-05T11:00:00Z' } }), NOW, 6 * HOUR)]
   expect(transitions(snapshot(running), done)).toEqual(['✓ app main build passed', '⬆ app v2 released — ready to download'])
-})
-
-test('transitionEvents gives each build and release change a stable dedupe key', () => {
-  const running = [analyze(repo({ head: 'PENDING', latestRelease: { tagName: 'v1', publishedAt: '2026-10-04T00:00:00Z' } }), NOW, 6 * HOUR)]
-  const failed = [analyze(repo({ head: 'FAILURE', latestRelease: { tagName: 'v1', publishedAt: '2026-10-04T00:00:00Z' } }), NOW, 6 * HOUR)]
-  const events = transitionEvents(snapshot(running), failed)
-  expect(events.map(e => e.line)).toEqual(['✗ app main build failed'])
-  expect(events[0]!.key).toMatch(/^build:app:main:/)
 })
 
 test('an untouched repo with a conflicted PR is stale; a building one never is', () => {
