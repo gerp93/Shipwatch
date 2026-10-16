@@ -126,8 +126,8 @@ export function barsSvg(rows: BarRow[], width = 520): string {
 
 export type WeekColumn = { label: string; parts: ChartPart[] }
 
-/** Stacked columns, one per week, oldest left, with a faint baseline and the peak marked. */
-export function weeksSvg(weeks: WeekColumn[], width = 520, height = 150): string {
+/** Stacked columns, one per week (or day or month: `unit` names the tooltip's "Week of"), oldest left, with a faint baseline and the peak marked. */
+export function weeksSvg(weeks: WeekColumn[], width = 520, height = 150, unit = 'Week of'): string {
   if (weeks.length === 0) return ''
   const top = 16
   const bottom = 22
@@ -145,7 +145,7 @@ export function weeksSvg(weeks: WeekColumn[], width = 520, height = 150): string
       const h = (num(p.value) / peak) * plotH
       if (h <= 0) continue
       y -= h
-      body += `<rect class="m" x="${round(x)}" y="${round(y)}" width="${round(barW)}" height="${round(h)}" fill="${p.color}"><title>Week of ${esc(w.label)} · ${esc(p.label)}: ${p.value}</title></rect>`
+      body += `<rect class="m" x="${round(x)}" y="${round(y)}" width="${round(barW)}" height="${round(h)}" fill="${p.color}"><title>${esc(unit)} ${esc(w.label)} · ${esc(p.label)}: ${p.value}</title></rect>`
     }
     // Label about every fourth week so they never collide.
     if (i % Math.max(1, Math.ceil(weeks.length / 6)) === 0) {
