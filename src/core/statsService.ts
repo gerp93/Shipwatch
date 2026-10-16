@@ -60,9 +60,10 @@ export type StatsDeps = {
   wait?: (ms: number) => Promise<void>
   /**
    * Go on past the share of the hourly allowance normally left for other tools, using it down to what one more
-   * request needs. For a load the person asked to run now; GitHub's own refusal (an empty allowance) still stops it.
+   * request needs. For a load the person asked to run now (a function is asked again at each pause, so the
+   * person can say so mid-load); GitHub's own refusal (an empty allowance) still stops it.
    */
-  spendReserve?: boolean
+  spendReserve?: boolean | (() => boolean)
 }
 
 const RATE_LIMIT_TRIES = 4
@@ -147,7 +148,8 @@ export const refreshStats = async (deps: StatsDeps, s: StatsBoard): Promise<Stat
     if (deps.wait && last && i < ordered.length - 1) {
       const b: Budget = last
       await deps.wait(Math.min(MAX_GAP_MS, Math.max(MIN_GAP_MS, spent * MS_PER_POINT)))
-      if (b.remaining - (deps.spendReserve ? 0 : b.limit * RESERVE_FRACTION) < b.cost * 2) {
+      const spend = typeof deps.spendReserve === 'function' ? deps.spendReserve() : !!deps.spendReserve
+      if (b.remaining - (spend ? 0 : b.limit * RESERVE_FRACTION) < b.cost * 2) {
         const untilReset = b.resetAt - Date.now()
         if (untilReset > RATE_LIMIT_MAX_WAIT_MS || !(untilReset > 0)) throw new Error(reserveMessage(b.resetAt, Date.now()))
         deps.onProgress?.(`Pausing to keep part of GitHub's hourly allowance free for your other tools; resuming in ${Math.ceil(untilReset / 60_000)} min...`)

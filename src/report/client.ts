@@ -355,6 +355,7 @@ function fillBanner(box: HTMLElement, st: Status, kind: 'stats' | 'board' = 'sta
     el('div', { class: 'dim' }, st.text || 'Starting...'),
     meter,
     el('div', { class: 'dim' }, `${heldNote} Longer ranges fill in as it goes; it only reads what it does not already have.`),
+    ...fetchNowControl(),
   )
 }
 

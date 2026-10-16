@@ -51,7 +51,9 @@ export type CollectDeps = {
   infraVerdicts: InfraVerdicts
   onProgress?: (text: string) => void
   /** Read the history now even if that uses the share of GitHub's allowance normally kept for other tools. */
-  spendReserve?: boolean
+  spendReserve?: boolean | (() => boolean)
+  /** Waits `ms`; the app supplies one it can cut short. Defaults to a plain timer. */
+  wait?: (ms: number) => Promise<void>
 }
 
 /** What the first step learned: who, their repos as the dashboard shows them, and the PRs opened in the last hour. */
@@ -183,7 +185,7 @@ export const collectStats = async (
         now,
         onProgress: text => deps.onProgress?.(text),
         spendReserve: deps.spendReserve,
-        wait: ms => new Promise(resolve => setTimeout(resolve, ms)),
+        wait: deps.wait ?? (ms => new Promise(resolve => setTimeout(resolve, ms))),
         onPartial: (prs, you, repos) => {
           stats = { ...stats, prs, you, repos }
           onPartial?.({ prs, you, repos })
