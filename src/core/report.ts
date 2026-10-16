@@ -72,7 +72,7 @@ table.compact{width:100%;min-width:340px}.fill{flex:1;min-width:340px}
 .tiles{display:flex;gap:12px;flex-wrap:wrap;margin:12px 0}.tile{flex:1 1 130px;background:var(--card);border:1px solid var(--line);border-radius:8px;padding:10px 16px;min-width:130px}
 .big{font-size:22px;font-weight:600}
 .pill{display:inline-block;padding:1px 8px;border-radius:10px;font-size:12px;color:#fff;background:var(--idle);white-space:nowrap}
-.pill.fail{background:var(--fail)}.pill.running{background:var(--running)}.pill.ready{background:var(--ready)}.pill.pending{background:var(--pending)}.pill.draft{background:var(--draft)}.pill.recent{background:var(--merged)}
+.pill.fail{background:var(--fail)}.pill.running{background:var(--running)}.pill.ready{background:var(--ready)}.pill.pending{background:var(--pending)}.pill.draft{background:var(--draft)}.pill.recent{background:var(--merged)}.pill.released{background:#2dbdb6}.pill+.pill{margin-left:4px}
 .steps{display:flex;flex-wrap:wrap;gap:6px}td.where{min-width:270px}
 .step{display:inline-block;font-size:12px;line-height:18px;padding:0 7px;border-radius:4px;border:1px solid var(--line);color:var(--dim);white-space:nowrap}
 .step.done{color:var(--ready);border-color:var(--ready)}.step.running{color:var(--running);border-color:var(--running)}.step.failed{color:var(--fail);border-color:var(--fail)}

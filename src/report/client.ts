@@ -19,10 +19,21 @@ const LEVEL_LABEL: Record<Level, string> = {
   running: 'Building',
   ready: 'Ready to merge',
   pending: 'Awaiting release',
-  recent: 'Recently merged',
+  recent: 'Merged',
   draft: 'Draft only',
   idle: 'Quiet',
 }
+/**
+ * The pills a repo wears. Most states are one pill. A repo with nothing to act on says how far its work got:
+ * Released (the release has caught up with the default branch), or Merged (it has not); and when nothing has
+ * moved for days it also wears Quiet, so it can be Released and Quiet, or Merged and Quiet.
+ */
+const pillsOf = (r: RepoView): Array<{ text: string; cls: string }> => {
+  if (r.level !== 'recent' && r.level !== 'idle') return [{ text: LEVEL_LABEL[r.level], cls: r.level }]
+  const progress = r.steps[3] === 'done' ? [{ text: 'Released', cls: 'released' }] : r.steps[2] === 'done' ? [{ text: 'Merged', cls: 'recent' }] : []
+  return r.level === 'recent' ? progress : [...progress, { text: LEVEL_LABEL.idle, cls: 'idle' }]
+}
+
 const STEP_NAMES = ['PR', 'Build', 'Merged', 'Released']
 
 type Sort = { key: string; dir: 1 | -1 }
@@ -35,7 +46,8 @@ type State = {
   hidden: string[]
   repo: string | null
   q: string
-  level: Level | 'all'
+  /** 'all', or the text of one pill (see `pillsOf`). */
+  level: string
   /** Show draft PRs (and PRs titled "do not merge") and the repos that have only those; off unless asked for. */
   drafts: boolean
   sort: Sort
@@ -175,7 +187,7 @@ function dashboard(): HTMLElement {
   const draftOnly = data.board.repos.filter(r => r.level === 'draft').length
   const inView = data.board.repos.filter(r => state.drafts || r.level !== 'draft')
   const openPrs = (r: RepoView): PrView[] => (state.drafts ? r.prs : r.prs.filter(p => !p.parked))
-  const repos = inView.filter(r => (state.level === 'all' || r.level === state.level) && r.name.toLowerCase().includes(needle))
+  const repos = inView.filter(r => (state.level === 'all' || pillsOf(r).some(p => p.text === state.level)) && r.name.toLowerCase().includes(needle))
   const keyOf: Record<string, (r: RepoView) => string | number> = {
     level: r => LEVEL_ORDER[r.level],
     name: r => r.name.toLowerCase(),
@@ -189,7 +201,9 @@ function dashboard(): HTMLElement {
     state.dashSort = { key, dir: state.dashSort.key === key ? (-state.dashSort.dir as 1 | -1) : 1 }
     draw()
   }
-  const counts = (Object.keys(LEVEL_ORDER) as Level[]).map(l => [l, inView.filter(r => r.level === l).length] as const)
+  // One filter button per pill, in the order the levels sort; a repo wearing two pills counts under both.
+  const counts = new Map<string, number>()
+  for (const r of [...inView].sort((a, b) => LEVEL_ORDER[a.level] - LEVEL_ORDER[b.level])) for (const p of pillsOf(r)) counts.set(p.text, (counts.get(p.text) ?? 0) + 1)
 
   return el(
     'section',
@@ -208,7 +222,7 @@ function dashboard(): HTMLElement {
         },
       }),
       button(`All ${inView.length}`, state.level === 'all', () => ((state.level = 'all'), draw())),
-      ...counts.filter(([, n]) => n > 0).map(([l, n]) => button(`${LEVEL_LABEL[l]} ${n}`, state.level === l, () => ((state.level = l), draw()))),
+      ...[...counts].map(([l, n]) => button(`${l} ${n}`, state.level === l, () => ((state.level = l), draw()))),
       el('span', { class: 'grow' }),
       el(
         'label',
@@ -218,7 +232,7 @@ function dashboard(): HTMLElement {
           checked: state.drafts ? 'checked' : undefined,
           onchange: (e: Event) => {
             state.drafts = (e.target as HTMLInputElement).checked
-            if (!state.drafts && state.level === 'draft') state.level = 'all'
+            if (!state.drafts && state.level === LEVEL_LABEL.draft) state.level = 'all'
             rememberDrafts(state.drafts)
             draw()
           },
@@ -249,7 +263,7 @@ function dashboard(): HTMLElement {
           el(
             'tr',
             { class: `lv-${r.level}` },
-            el('td', {}, el('span', { class: `pill ${r.level}` }, r.isInfra ? 'Runner outage' : LEVEL_LABEL[r.level])),
+            el('td', {}, ...(r.isInfra ? [el('span', { class: `pill ${r.level}` }, 'Runner outage')] : pillsOf(r).map(p => el('span', { class: `pill ${p.cls}` }, p.text)))),
             el('td', {}, el('a', { href: r.url, target: '_blank', rel: 'noopener' }, r.name), r.headline ? el('div', { class: 'dim' }, r.headline) : null),
             el('td', { class: 'where' }, el('div', { class: 'steps' }, ...r.steps.map((s, i) => el('span', { class: `step ${s}`, title: `${STEP_NAMES[i]}: ${s}` }, STEP_NAMES[i])))),
             el(

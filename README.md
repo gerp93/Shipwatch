@@ -50,10 +50,11 @@ many draft-only repos are hidden. The app's Merge button refuses a PR titled "do
 the terminal pane a repo with only set-aside PRs shows its default branch's state if that needs attention, and otherwise
 sits below the real work as "draft".
 
-**Recently merged, and Quiet.** A repo with nothing to act on is **Recently merged** if its default branch was updated
-in the last three days (the row says how long ago), and **Quiet** if nothing has moved for longer. The stepper's steps
+**Released, Merged and Quiet.** A repo with nothing to act on says how far its work got: **Released** when its latest
+release has caught up with the default branch, **Merged** when it has not. If nothing has moved for three days it also
+wears **Quiet**, so a repo can be Released and Quiet, or Merged and Quiet (the row says how long ago it was last merged). The stepper's steps
 are one colour scheme all the way across: green when done, amber while running, red if failed, dim when not reached yet.
-Purple means one thing only, a merged PR (the clock's dots and the Recently merged label).
+Purple means one thing only, a merged PR (the clock's dots and the Merged label); released is its own colour, teal.
 
 **Cancelled and skipped runs are not failures.** GitHub's combined status counts a run that a
 newer push cancelled as a failure. Shipwatch reads the individual checks instead: only a failed
