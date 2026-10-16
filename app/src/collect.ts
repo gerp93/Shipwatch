@@ -50,6 +50,8 @@ export type CollectDeps = {
   now: number
   infraVerdicts: InfraVerdicts
   onProgress?: (text: string) => void
+  /** Read the history now even if that uses the share of GitHub's allowance normally kept for other tools. */
+  spendReserve?: boolean
 }
 
 /** What the first step learned: who, their repos as the dashboard shows them, and the PRs opened in the last hour. */
@@ -180,6 +182,7 @@ export const collectStats = async (
         aiNames: config.aiNames,
         now,
         onProgress: text => deps.onProgress?.(text),
+        spendReserve: deps.spendReserve,
         wait: ms => new Promise(resolve => setTimeout(resolve, ms)),
         onPartial: (prs, you, repos) => {
           stats = { ...stats, prs, you, repos }
