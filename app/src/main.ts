@@ -10,9 +10,7 @@ import { pathToFileURL } from 'node:url'
 
 import type { InfraVerdicts } from '../../src/core/boardService'
 import { pace } from '../../src/core/budget'
-import type { ApiLimits } from '../../src/core/budget'
-import { connect, fetchApiLimits } from '../../src/core/github'
-import type { Access } from '../../src/core/ports'
+import type { ApiLimits, Budget } from '../../src/core/budget'
 import { fetchRecentPrs } from '../../src/core/recent'
 import { renderReport } from '../../src/core/report'
 import type { BoardStatus, ReportData, StatsStatus } from '../../src/core/report'
@@ -23,7 +21,7 @@ import { HOUR_MS, RateLimited, collectDashboard, collectStats, loadSavedDashboar
 import type { CollectDeps, DashboardRead } from './collect'
 import { readConfig } from './config'
 import { setApiScript, setBoardScript, setBoardStatusScript, setRecentScript, setStatsScript, setStatusScript, throttled } from './live'
-import { mergeFromReport } from './merge'
+import { closeFromReport, mergeFromReport } from './merge'
 import { errorPage, isSafeExternalUrl, loadingPage, progressFraction } from './pages'
 import { checkForUpdatesNow, setupAutoUpdater } from './updates'
 
@@ -132,7 +130,6 @@ let lastRead: DashboardRead | undefined
 let lastApi: ApiLimits | undefined
 let boardStatus: BoardStatus | null = null
 let refreshTimer: NodeJS.Timeout | undefined
-let limitsTimer: NodeJS.Timeout | undefined
 let recentTimer: NodeJS.Timeout | undefined
 let recentBackoffUntil = 0
 
@@ -214,8 +211,6 @@ async function refresh(): Promise<void> {
       toPage(setBoardStatusScript(boardStatus))
       // A rate limit says when it resets (the message has the time); ask again then. Anything else, in a few minutes.
       scheduleRefresh(err instanceof RateLimited ? err.retryInMs : RETRY_AFTER_ERROR_MS)
-      startLiveTimers()
-      void updateLimits()
       return
     }
     lastRead = read
@@ -229,7 +224,7 @@ async function refresh(): Promise<void> {
       await showReport(deps, { owner: read.owner, repos: read.repos, recent: read.recent, at: deps.now })
     }
     startLiveTimers()
-    void updateLimits()
+    noteBudget(read.budget)
     if (!isLoadingStats && shouldLoadStats()) void loadStatsInBackground({ ...deps, onProgress: undefined }, read)
     scheduleRefresh(pace(read.budget, Date.now(), REFRESH_MS).delayMs)
   } catch (err) {
@@ -239,30 +234,22 @@ async function refresh(): Promise<void> {
   }
 }
 
-/** How to reach GitHub for the readout when no dashboard read has succeeded to supply it (the read is what may be refused). */
-let limitsAccess: Access | undefined
-
 /**
- * What is left of GitHub's allowances, asked of the endpoint that costs nothing, and handed to the header's readout.
- * It does not wait for a dashboard read: when GitHub is refusing that read, this is exactly when the readout is wanted.
+ * What is left of GitHub's GraphQL allowance, for the header's readout, taken from the `rateLimit` numbers GitHub
+ * returns with every read (the dashboard's, and the last hour's each minute), so it costs nothing extra. GitHub's
+ * separate REST rate-limit page is not used: it has reported a different count from GraphQL's own.
  */
-async function updateLimits(): Promise<void> {
-  try {
-    limitsAccess ??= lastRead?.access ?? (await connect(nodeIO(), (await loadConfig()).token))
-  } catch {
-    return
-  }
-  const limits = await fetchApiLimits(nodeIO(), lastRead?.access ?? limitsAccess)
-  if (!limits) return
-  lastApi = limits
-  toPage(setApiScript(limits))
+function noteBudget(b: Budget | undefined): void {
+  if (!b) return
+  lastApi = { graphql: { remaining: b.remaining, limit: b.limit, resetAt: b.resetAt } }
+  toPage(setApiScript(lastApi))
 }
 
 /** The last hour's PRs, for the clock's rim, read again each minute (one point) unless GitHub has been refusing. */
 async function updateRecent(): Promise<void> {
   if (!lastRead || isRefreshing || Date.now() < recentBackoffUntil) return
   try {
-    const recent = await fetchRecentPrs(nodeIO(), lastRead.access, lastRead.owner, Date.now() - HOUR_MS)
+    const recent = await fetchRecentPrs(nodeIO(), lastRead.access, lastRead.owner, Date.now() - HOUR_MS, noteBudget)
     lastRead = { ...lastRead, recent }
     toPage(setRecentScript(recent))
   } catch {
@@ -271,13 +258,12 @@ async function updateRecent(): Promise<void> {
 }
 
 function startLiveTimers(): void {
-  limitsTimer ??= setInterval(() => void updateLimits(), 30_000)
   recentTimer ??= setInterval(() => void updateRecent(), 60_000)
 }
 
 function stopTimers(): void {
-  for (const t of [refreshTimer, limitsTimer, recentTimer]) if (t) clearTimeout(t)
-  refreshTimer = limitsTimer = recentTimer = undefined
+  for (const t of [refreshTimer, recentTimer]) if (t) clearTimeout(t)
+  refreshTimer = recentTimer = undefined
 }
 
 function setupMenu(): void {
@@ -312,36 +298,41 @@ function setupMenu(): void {
 
 /** The report's Merge button: only the report itself may ask, and the user is asked before anything is merged. */
 function setupMerge(): void {
-  ipcMain.handle('shipwatch:merge', async (event, repo: unknown, number: unknown) => {
-    const isReport = event.senderFrame?.url === pathToFileURL(userFile('report.html')).href
-    if (!isReport || !win || !onScreen) return { ok: false, message: 'Merge is only available from the report.' }
-    const result = await mergeFromReport(
-      {
-        io: nodeIO(),
-        config: await loadConfig(),
-        owner: onScreen.owner,
-        known: onScreen.prs,
-        confirm: async q => {
-          const { response } = await dialog.showMessageBox(win!, {
-            type: 'question',
-            title: 'Shipwatch',
-            message: q.title,
-            detail: q.detail,
-            buttons: [q.action, 'Cancel'],
-            defaultId: 1,
-            cancelId: 1,
-            noLink: true,
-          })
-          return response === 0
+  /** One of the report's PR buttons: only the report itself may ask, and the user is asked before anything changes. */
+  const register = (channel: string, verb: string, act: typeof mergeFromReport): void => {
+    ipcMain.handle(channel, async (event, repo: unknown, number: unknown) => {
+      const isReport = event.senderFrame?.url === pathToFileURL(userFile('report.html')).href
+      if (!isReport || !win || !onScreen) return { ok: false, message: `${verb} is only available from the report.` }
+      const result = await act(
+        {
+          io: nodeIO(),
+          config: await loadConfig(),
+          owner: onScreen.owner,
+          known: onScreen.prs,
+          confirm: async q => {
+            const { response } = await dialog.showMessageBox(win!, {
+              type: 'question',
+              title: 'Shipwatch',
+              message: q.title,
+              detail: q.detail,
+              buttons: [q.action, 'Cancel'],
+              defaultId: 1,
+              cancelId: 1,
+              noLink: true,
+            })
+            return response === 0
+          },
         },
-      },
-      repo,
-      number,
-    )
-    // GitHub changed, so the report on screen is stale: read it again.
-    if (result.changed) void refresh()
-    return { ok: result.ok, message: result.message }
-  })
+        repo,
+        number,
+      )
+      // GitHub changed, so the report on screen is stale: read it again.
+      if (result.changed) void refresh()
+      return { ok: result.ok, message: result.message }
+    })
+  }
+  register('shipwatch:merge', 'Merge', mergeFromReport)
+  register('shipwatch:close', 'Close', closeFromReport)
 }
 
 /**

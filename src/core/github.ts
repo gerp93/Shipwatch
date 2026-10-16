@@ -142,6 +142,24 @@ export const fetchApiLimits = async (io: IO, access: Access): Promise<ApiLimits 
   }
 }
 
+/**
+ * GitHub's own account of its GraphQL limit: points, total and reset time. GraphQL's `rateLimit` field is what the
+ * refusals follow, so it is asked first (it costs a point, and is itself refused when none are left). The REST
+ * `rate_limit` page is only the fallback: it is free but has been seen to report a different window and count (4,818
+ * points left and a later reset while GraphQL's own count was 0), so it is never trusted for how many are left.
+ */
+export const fetchLimitStatus = async (io: IO, access: Access): Promise<ApiLimit | undefined> => {
+  try {
+    const out = await graphql(io, access, 'query{ rateLimit{ limit remaining resetAt } }', {})
+    const r = out?.data?.rateLimit
+    const resetAt = Date.parse(r?.resetAt)
+    if (typeof r?.remaining === 'number' && typeof r?.limit === 'number' && Number.isFinite(resetAt)) return { remaining: r.remaining, limit: r.limit, resetAt }
+  } catch {
+    // GraphQL is refusing: fall back to the REST page, for the reset time.
+  }
+  return (await fetchApiLimits(io, access))?.graphql
+}
+
 /** Just the GraphQL reset time of `fetchApiLimits`. */
 export const fetchGraphqlReset = async (io: IO, access: Access): Promise<number | undefined> => (await fetchApiLimits(io, access))?.graphql?.resetAt
 

@@ -3,8 +3,10 @@
 // decisions about what is safe are the core's (src/core/merge.ts); this file is only the hand-off.
 
 import { connect } from '../../src/core/github'
+import { doClose, planClose } from '../../src/core/close'
 import { doMerge, planMerge } from '../../src/core/merge'
 import type { MergePlan } from '../../src/core/merge'
+import type { ClosePlan } from '../../src/core/close'
 import type { IO } from '../../src/core/ports'
 
 import type { AppConfig } from './config'
@@ -16,7 +18,7 @@ export type MergeResult = {
   ok: boolean
   /** One line for the person: what happened, or why not. */
   message: string
-  /** GitHub changed (merged, or auto-merge turned on), so the report on screen is out of date. */
+  /** GitHub changed (merged, closed, or auto-merge turned on), so the report on screen is out of date. */
   changed: boolean
 }
 
@@ -47,22 +49,53 @@ export const describePlan = (repo: string, plan: Exclude<MergePlan, { kind: 'ref
 
 const REPO_NAME = /^[A-Za-z0-9._-]{1,100}$/
 
+/** What a request from the page must satisfy before anything is read from GitHub; undefined if it is fine. */
+const checkRequest = (deps: MergeDeps, repo: unknown, number: unknown): string | undefined => {
+  if (typeof repo !== 'string' || !REPO_NAME.test(repo) || typeof number !== 'number' || !Number.isSafeInteger(number) || number < 1) return 'That is not a pull request.'
+  if (!deps.known.has(`${repo}#${number}`)) return `${repo}#${number} is not on this report. Refresh and try again.`
+  return undefined
+}
+
 /**
  * Handles the page's request to merge `repo`#`number`. Arguments come from a web page, so they are checked: the PR
  * must be one the report on screen lists. Never throws; a problem comes back as a result to show.
  */
 export const mergeFromReport = async (deps: MergeDeps, repo: unknown, number: unknown): Promise<MergeResult> => {
   const fail = (message: string): MergeResult => ({ ok: false, message, changed: false })
-  if (typeof repo !== 'string' || !REPO_NAME.test(repo) || typeof number !== 'number' || !Number.isSafeInteger(number) || number < 1) {
-    return fail('That is not a pull request.')
-  }
-  if (!deps.known.has(`${repo}#${number}`)) return fail(`${repo}#${number} is not on this report. Refresh and try again.`)
+  const bad = checkRequest(deps, repo, number)
+  if (bad) return fail(bad)
   try {
     const access = await connect(deps.io, deps.config.token)
-    const plan = await planMerge(deps.io, access, deps.owner, repo, number)
+    const plan = await planMerge(deps.io, access, deps.owner, repo as string, number as number)
     if (plan.kind === 'refuse') return fail(plan.reason)
-    if (!(await deps.confirm(describePlan(repo, plan)))) return fail('Cancelled.')
+    if (!(await deps.confirm(describePlan(repo as string, plan)))) return fail('Cancelled.')
     return { ok: true, message: await doMerge(deps.io, access, plan), changed: true }
+  } catch (err) {
+    return fail(err instanceof Error ? err.message : String(err))
+  }
+}
+
+/** The confirmation for closing a PR. */
+export const describeClose = (repo: string, plan: Extract<ClosePlan, { kind: 'close' }>): Question => ({
+  title: `Close ${repo}#${plan.number}?`,
+  detail: `${plan.title}\n\nIt is closed without being merged${plan.isDraft ? ' (it is a draft)' : ''}. You can reopen it from its page on GitHub.`,
+  action: 'Close',
+})
+
+/**
+ * Handles the page's request to close `repo`#`number`, with the same checks as merging: the arguments are checked,
+ * the PR must be on the report, GitHub is asked about it fresh, and the user is asked before anything changes.
+ */
+export const closeFromReport = async (deps: MergeDeps, repo: unknown, number: unknown): Promise<MergeResult> => {
+  const fail = (message: string): MergeResult => ({ ok: false, message, changed: false })
+  const bad = checkRequest(deps, repo, number)
+  if (bad) return fail(bad)
+  try {
+    const access = await connect(deps.io, deps.config.token)
+    const plan = await planClose(deps.io, access, deps.owner, repo as string, number as number)
+    if (plan.kind === 'refuse') return fail(plan.reason)
+    if (!(await deps.confirm(describeClose(repo as string, plan)))) return fail('Cancelled.')
+    return { ok: true, message: await doClose(deps.io, access, plan), changed: true }
   } catch (err) {
     return fail(err instanceof Error ? err.message : String(err))
   }
