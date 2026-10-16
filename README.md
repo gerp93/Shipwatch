@@ -52,7 +52,8 @@ sits below the real work as "draft".
 
 **Recently merged, and Quiet.** A repo with nothing to act on is **Recently merged** if its default branch was updated
 in the last three days (the row says how long ago), and **Quiet** if nothing has moved for longer. The stepper's steps
-are coloured as GitHub colours them: PR green (open), Build green / amber / red, Merged purple, Released blue.
+are one colour scheme all the way across: green when done, amber while running, red if failed, dim when not reached yet.
+Purple means one thing only, a merged PR (the clock's dots and the Recently merged label).
 
 **Cancelled and skipped runs are not failures.** GitHub's combined status counts a run that a
 newer push cancelled as a failure. Shipwatch reads the individual checks instead: only a failed

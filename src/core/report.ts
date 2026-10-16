@@ -73,7 +73,7 @@ table.compact{width:100%;min-width:340px}.fill{flex:1;min-width:340px}
 .pill.fail{background:var(--fail)}.pill.running{background:var(--running)}.pill.ready{background:var(--ready)}.pill.pending{background:var(--pending)}.pill.draft{background:var(--draft)}.pill.recent{background:var(--merged)}
 .steps{display:flex;flex-wrap:wrap;gap:6px}td.where{min-width:270px}
 .step{display:inline-block;font-size:12px;line-height:18px;padding:0 7px;border-radius:4px;border:1px solid var(--line);color:var(--dim);white-space:nowrap}
-.step.done{color:var(--ready);border-color:var(--ready)}.step.merged.done{color:var(--merged);border-color:var(--merged)}.step.released.done{color:var(--accent);border-color:var(--accent)}.step.running{color:var(--running);border-color:var(--running)}.step.failed{color:var(--fail);border-color:var(--fail)}
+.step.done{color:var(--ready);border-color:var(--ready)}.step.running{color:var(--running);border-color:var(--running)}.step.failed{color:var(--fail);border-color:var(--fail)}
 .dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px}
 .chip{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:2px 4px 2px 10px}.x{font:inherit;background:none;border:0;color:var(--dim);cursor:pointer;padding:0 6px}
 .svg{max-width:100%;overflow-x:auto}.svg svg{max-width:100%;height:auto}

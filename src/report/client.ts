@@ -24,8 +24,6 @@ const LEVEL_LABEL: Record<Level, string> = {
   idle: 'Quiet',
 }
 const STEP_NAMES = ['PR', 'Build', 'Merged', 'Released']
-/** Each step has its own colour when done, as GitHub colours them: open green, checks green, merged purple, released blue. */
-const STEP_CLASS = ['open', 'checks', 'merged', 'released']
 
 type Sort = { key: string; dir: 1 | -1 }
 
@@ -240,7 +238,7 @@ function dashboard(): HTMLElement {
             { class: `lv-${r.level}` },
             el('td', {}, el('span', { class: `pill ${r.level}` }, r.isInfra ? 'Runner outage' : LEVEL_LABEL[r.level])),
             el('td', {}, el('a', { href: r.url, target: '_blank', rel: 'noopener' }, r.name), r.headline ? el('div', { class: 'dim' }, r.headline) : null),
-            el('td', { class: 'where' }, el('div', { class: 'steps' }, ...r.steps.map((s, i) => el('span', { class: `step ${STEP_CLASS[i]} ${s}`, title: `${STEP_NAMES[i]}: ${s}` }, STEP_NAMES[i])))),
+            el('td', { class: 'where' }, el('div', { class: 'steps' }, ...r.steps.map((s, i) => el('span', { class: `step ${s}`, title: `${STEP_NAMES[i]}: ${s}` }, STEP_NAMES[i])))),
             el(
               'td',
               {},
