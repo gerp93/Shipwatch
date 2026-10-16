@@ -235,34 +235,27 @@ export const snapshot = (repos: readonly RepoView[]): Seen => {
   return seen
 }
 
-/** An event that changed since `before`, with a stable key for deduplicating it across sessions. */
-export type TransitionEvent = { key: string; line: string }
-
-export const transitionEvents = (before: Seen, repos: readonly RepoView[]): TransitionEvent[] => {
+/** Toast lines for what changed since `before`; empty on the first poll (`before` empty). */
+export const transitions = (before: Seen, repos: readonly RepoView[]): string[] => {
   if (Object.keys(before).length === 0) return []
-  const out: TransitionEvent[] = []
-  const settled = (was: Checks | undefined, now: Checks, label: string, key: string) => {
+  const out: string[] = []
+  const settled = (was: Checks | undefined, now: Checks, label: string) => {
     if (was !== 'running') return
-    if (now === 'passing') out.push({ key: `build:${key}:passed`, line: `✓ ${label} build passed` })
-    else if (now === 'failing') out.push({ key: `build:${key}:failed`, line: `✗ ${label} build failed` })
+    if (now === 'passing') out.push(`✓ ${label} build passed`)
+    else if (now === 'failing') out.push(`✗ ${label} build failed`)
   }
   for (const r of repos) {
     const was = before[r.name]
     if (!was) continue
-    settled(was.head, r.headChecks, `${r.name} main`, `${r.name}:main:${r.headOid || 'unknown'}`)
+    settled(was.head, r.headChecks, `${r.name} main`)
     // A draft's checks are no one's to-do, so they are not announced.
-    for (const p of r.prs) {
-      if (!p.parked) settled(was.prs[p.number], p.checks, `${r.name} #${p.number}`, `${r.name}:pr:${p.number}`)
-    }
+    for (const p of r.prs) if (!p.parked) settled(was.prs[p.number], p.checks, `${r.name} #${p.number}`)
     if (was.tag && r.release && r.release.tag !== was.tag) {
-      out.push({ key: `release:${r.name}:${r.release.tag}`, line: `⬆ ${r.name} ${r.release.tag} released — ready to download` })
+      out.push(`⬆ ${r.name} ${r.release.tag} released — ready to download`)
     }
   }
   return out
 }
-
-/** Toast lines for what changed since `before`; empty on the first poll (`before` empty). */
-export const transitions = (before: Seen, repos: readonly RepoView[]): string[] => transitionEvents(before, repos).map(e => e.line)
 
 /** Short relative age: `now`, `5m`, `3h`, `2d`. */
 export const ago = (iso: string, now: number): string => {

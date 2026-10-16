@@ -145,8 +145,8 @@ or for sessions the desktop app starts, set `CLAUDE_CODE_PLUGIN_DIRS` (and
 | `pollSeconds` | `60` | Refresh interval while nothing is building. |
 | `maxRepos` | `40` | Most recently pushed repos to track (1-100). |
 | `staleDays` | `14` | A repo with no push or PR activity for this long, and nothing building, moves to a collapsed Stale group (`s` toggles it). |
-| `autoFix` | `false` | When a default-branch build goes from running to failing, queue a prompt in the session asking Claude to find the cause and open a fix PR (never a direct push). Starts its own turn once the session is idle. |
-| `autoFixLimit` | `5` | Most fix prompts per session; one per failing commit. |
+| `autoFix` | `false` | When a default-branch build goes from running to failing, queue a prompt in the session asking Claude to find the cause and open a fix PR (never a direct push). Starts its own turn once the session is idle. Only one session is asked, however many are open. |
+| `autoFixLimit` | `5` | Most fix prompts in 24 hours, counted across every open session; one per failing commit, and at most one per repo per hour. |
 | `aiNames` | empty | Extra names to count as AI in Stats, comma-separated, besides the ones recognized automatically. |
 | `includeForks` | `false` | Also track forks. |
 | `ignoreRepos` | empty | Comma-separated repo names to skip. |
