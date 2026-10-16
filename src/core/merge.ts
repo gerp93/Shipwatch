@@ -4,6 +4,7 @@
 // GitHub itself rules on those, and a refusal from GitHub comes back as the error.
 
 import { graphql } from './github'
+import { NOT_FOR_MERGE } from './parked'
 import type { Access, IO } from './ports'
 
 type Method = 'MERGE' | 'SQUASH' | 'REBASE'
@@ -66,6 +67,7 @@ export const planMerge = async (io: IO, access: Access, owner: string, repo: str
   const refuse = (reason: string): MergePlan => ({ kind: 'refuse', reason })
   if (pr.state !== 'OPEN') return refuse(`#${number} is already ${String(pr.state).toLowerCase()}.`)
   if (pr.isDraft) return refuse(`#${number} is a draft. Mark it ready for review on GitHub first.`)
+  if (NOT_FOR_MERGE.test(pr.title ?? '')) return refuse(`#${number} is titled "do not merge".`)
   if (pr.mergeable === 'CONFLICTING' || pr.mergeStateStatus === 'DIRTY') return refuse(`#${number} has merge conflicts.`)
   const checks: string | undefined = pr.commits?.nodes?.[0]?.commit?.statusCheckRollup?.state
   if (checks === 'FAILURE' || checks === 'ERROR') return refuse(`#${number} has failing checks.`)

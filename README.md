@@ -42,10 +42,17 @@ release. With several apps going at once it answers "which of these is waiting o
 With an open PR the stepper follows the most urgent one (conflicts or failing checks, then
 running, then ready). With none it follows the default branch.
 
-**Drafts are shown, quietly.** A draft PR never leads the stepper and never turns a repo red;
-its line is dimmed, and its checks are not announced. A repo whose only open PRs are drafts
-shows its default branch's state if that needs attention, and otherwise sits below the real work
-as "draft".
+**Drafts and "do not merge" PRs are set aside.** A draft PR, or one whose title says "do not merge", never leads
+the stepper and never turns a repo red, and its checks are not announced. In the report and the app they are also
+left out by default: repos whose only open PRs are set aside are hidden, such PRs are not listed against other repos,
+and they do not appear on the clock. Tick **Include drafts** (remembered between visits) to see them; the box says how
+many draft-only repos are hidden. The app's Merge button refuses a PR titled "do not merge" and hides it for drafts. In
+the terminal pane a repo with only set-aside PRs shows its default branch's state if that needs attention, and otherwise
+sits below the real work as "draft".
+
+**Recently merged, and Quiet.** A repo with nothing to act on is **Recently merged** if its default branch was updated
+in the last three days (the row says how long ago), and **Quiet** if nothing has moved for longer. The stepper's steps
+are coloured as GitHub colours them: PR green (open), Build green / amber / red, Merged purple, Released blue.
 
 **Cancelled and skipped runs are not failures.** GitHub's combined status counts a run that a
 newer push cancelled as a failure. Shipwatch reads the individual checks instead: only a failed

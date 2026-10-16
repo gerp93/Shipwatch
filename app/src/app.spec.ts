@@ -154,6 +154,16 @@ test('a PR GitHub says cannot be merged is refused without asking the user', asy
   assert.equal(asked.length, 0)
 })
 
+test('a PR titled do not merge is refused without asking, however clean it looks', async () => {
+  const asked: Question[] = []
+  const { deps } = mergeDeps([prAnswer({ title: 'DO NOT MERGE: everything this repo changed since the original' })], true, asked)
+  const result = await mergeFromReport(deps, 'app', 7)
+  assert.equal(result.ok, false)
+  assert.equal(result.changed, false)
+  assert.ok(result.message.includes('do not merge'))
+  assert.equal(asked.length, 0)
+})
+
 test('the user is asked first, and declining changes nothing', async () => {
   const asked: Question[] = []
   const { deps, calls } = mergeDeps([prAnswer()], false, asked)
@@ -218,7 +228,7 @@ test('the dashboard saved last time comes back for the next start, and a missing
   const path = await tempFile('board.json')
   assert.equal(await loadSavedDashboard(path), undefined) // nothing saved yet: the very first start
   const repos = [{ name: 'app', url: 'https://github.com/o/app', level: 'idle', steps: ['done', 'done', 'done', 'done'], prs: [], headline: 'up to date' }] as never
-  const recent = [{ repo: 'app', number: 3, title: 't', url: 'https://github.com/o/app/pull/3', createdAt: '2026-10-15T14:00:00Z', state: 'open', isDraft: false, checks: 'none', mergedAt: null }] as never
+  const recent = [{ repo: 'app', number: 3, title: 't', url: 'https://github.com/o/app/pull/3', createdAt: '2026-10-15T14:00:00Z', state: 'open', isDraft: false, parked: false, checks: 'none', mergedAt: null }] as never
   await saveDashboard(path, { owner: 'me', repos, recent, at: 1_700_000_000_000 })
   const back = await loadSavedDashboard(path)
   assert.equal(back?.owner, 'me')
@@ -240,7 +250,7 @@ test('everything handed to the page while it is open is a literal that cannot en
   for (const script of [
     setBoardScript(board, 1, undefined),
     setBoardStatusScript({ state: 'error', text: nasty }),
-    setRecentScript([{ repo: nasty, number: 1, title: nasty, url: 'https://x', createdAt: 'x', state: 'open', isDraft: false, checks: 'none', mergedAt: null }]),
+    setRecentScript([{ repo: nasty, number: 1, title: nasty, url: 'https://x', createdAt: 'x', state: 'open', isDraft: false, parked: false, checks: 'none', mergedAt: null }]),
     setApiScript({ graphql: { remaining: 1, limit: 5000, resetAt: 1 } }),
   ]) {
     assert.ok(script.startsWith('window.shipwatchLive&&window.shipwatchLive.set'))

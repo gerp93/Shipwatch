@@ -36,7 +36,7 @@ export const DOT_LABEL: Record<DotStatus, string> = {
 export const dotStatus = (pr: RecentPr): DotStatus => {
   if (pr.state === 'merged') return 'merged'
   if (pr.state === 'closed') return 'closed'
-  if (pr.isDraft) return 'draft'
+  if (pr.parked) return 'draft'
   if (pr.checks === 'failing') return 'failing'
   if (pr.checks === 'running') return 'building'
   if (pr.checks === 'passing') return 'ready'

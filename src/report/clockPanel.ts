@@ -27,7 +27,7 @@ let source: () => RecentPr[] | undefined = () => undefined
 let timer: number | undefined
 
 /** What would change the picture: the PRs in the window and where each stands, and which hour it is (the two shades swap each hour). */
-const signature = (prs: readonly RecentPr[], now: number): string => `${prs.map(p => `${p.repo}#${p.number}:${p.state}:${p.checks}:${p.isDraft}`).join('|')}@${clockTime(now).hours}`
+const signature = (prs: readonly RecentPr[], now: number): string => `${prs.map(p => `${p.repo}#${p.number}:${p.state}:${p.checks}:${p.parked}`).join('|')}@${clockTime(now).hours}`
 
 const reduceMotion = (): boolean => window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
 

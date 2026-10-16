@@ -10,8 +10,11 @@ export type Checks = 'passing' | 'running' | 'failing' | 'none'
 /** One stepper position: done, in progress, failed, or not reached. */
 export type StepState = 'done' | 'running' | 'failed' | 'todo'
 
-/** How much attention a repo needs, most urgent first. */
-export type Level = 'fail' | 'running' | 'ready' | 'pending' | 'draft' | 'idle'
+/**
+ * How much attention a repo needs, most urgent first. `recent` is nothing to act on, but its default branch was
+ * updated in the last few days; `idle` (shown as Quiet) is nothing to act on and nothing updated for several days.
+ */
+export type Level = 'fail' | 'running' | 'ready' | 'pending' | 'recent' | 'draft' | 'idle'
 
 /**
  * A PR opened recently and where it stands now, open, merged or closed: what the ship clock puts on its dial.
@@ -26,6 +29,8 @@ export type RecentPr = {
   createdAt: string
   state: 'open' | 'merged' | 'closed'
   isDraft: boolean
+  /** A draft, or titled "do not merge". */
+  parked: boolean
   /** The checks on its latest commit; meaningful while it is open. */
   checks: Checks
   mergedAt: string | null
@@ -37,6 +42,8 @@ export type PrView = {
   url: string
   branch: string
   isDraft: boolean
+  /** A draft, or titled "do not merge": set aside, so left out of the repo's status unless asked for. */
+  parked: boolean
   hasConflict: boolean
   checks: Checks
   updatedAt: string
