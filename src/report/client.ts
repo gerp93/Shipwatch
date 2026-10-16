@@ -84,6 +84,10 @@ const ago = (iso: string): string => {
 const button = (label: string, active: boolean, onclick: () => void): HTMLElement =>
   el('button', { class: active ? 'btn on' : 'btn', onclick }, label)
 
+/** One of the two tabs under the header; the selected one is marked for screen readers as well as by its look. */
+const tab = (label: string, selected: boolean, onclick: () => void): HTMLElement =>
+  el('button', { class: selected ? 'tab on' : 'tab', role: 'tab', 'aria-selected': selected ? 'true' : 'false', onclick }, label)
+
 const th = (label: string, key: string, sort: Sort, set: (key: string) => void): HTMLElement =>
   el('th', { class: 'sortable', onclick: () => set(key) }, label + (sort.key === key ? (sort.dir === 1 ? ' ▲' : ' ▼') : ''))
 
@@ -529,8 +533,13 @@ function draw(): void {
         el('option', { value: '' }, 'Default theme'),
         ...THEME_IDS.map(id => el('option', { value: id, selected: id === document.body.className ? 'selected' : undefined }, themeLabel(id))),
       ),
-      button('Dashboard', state.view === 'dashboard', () => ((state.view = 'dashboard'), draw())),
-      button(data.statsStatus?.state === 'loading' ? 'Stats (loading...)' : 'Stats', state.view === 'stats', () => ((state.view = 'stats'), draw())),
+    ),
+    // The two views are tabs: one row of their own, two equal columns across the full width.
+    el(
+      'nav',
+      { class: 'tabs', role: 'tablist' },
+      tab('Dashboard', state.view === 'dashboard', () => ((state.view = 'dashboard'), draw())),
+      tab(data.statsStatus?.state === 'loading' ? 'Stats (loading...)' : 'Stats', state.view === 'stats', () => ((state.view = 'stats'), draw())),
     ),
     ...(data.boardStatus ? [boardBanner()!] : []),
     state.view === 'dashboard' ? dashboard() : stats(),
