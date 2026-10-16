@@ -64,6 +64,9 @@ const el = (tag: string, props: Record<string, unknown> = {}, ...kids: Child[]):
   return node
 }
 
+/** The width the wide charts are drawn at: the page's content box, so they line up with the tables and text. */
+const chartWidth = (): number => Math.max(320, Math.round(root.clientWidth - 32))
+
 /** A chart: markup from the core's chart functions, which escape everything they were given. */
 const raw = (html: string): HTMLElement => {
   const box = el('div', { class: 'svg' })
@@ -216,7 +219,7 @@ function commitsOverTime(agg: ReturnType<typeof aggregate>, sinceMs: number, col
     'div',
     {},
     el('h3', {}, `Commits per ${per}`, el('span', { class: 'dim' }, ' · by the day their PR merged')),
-    raw(linesSvg(labels, actors.map(a => ({ label: actorLabel(a), color: color(a), values: values[a] ?? [] })), 760, 210)),
+    raw(linesSvg(labels, actors.map(a => ({ label: actorLabel(a), color: color(a), values: values[a] ?? [] })), chartWidth(), 210)),
   )
 }
 
@@ -384,7 +387,7 @@ function stats(): HTMLElement {
           raw(donutSvg(agg.actors.map(a => ({ label: actorLabel(a.actor), value: a.commits, color: color(a.actor) })), `${Math.round((you / commits) * 100)}%`, 'You, by commits')),
           el(
             'div',
-            {},
+            { class: 'fill' },
             raw(legendSvg(agg.actors.map(a => ({ label: actorLabel(a.actor), color: color(a.actor) })), 260)),
             el(
               'table',
@@ -425,7 +428,7 @@ function stats(): HTMLElement {
                   .sort(([x], [y]) => (x === YOU ? -1 : y === YOU ? 1 : 0))
                   .map(([actor, value]) => ({ label: actorLabel(actor), value, color: color(actor) })),
               })),
-              760,
+              chartWidth(),
               170,
             ),
           ),
@@ -443,7 +446,7 @@ function stats(): HTMLElement {
                 parts: r.actors.map(a => ({ label: actorLabel(a.actor), value: a.commits, color: color(a.actor) })),
                 note: `${r.prs} PR${r.prs === 1 ? '' : 's'}`,
               })),
-              760,
+              chartWidth(),
             ),
           ),
           el(
@@ -558,6 +561,19 @@ function drawKeepFocus(selector: string): void {
 }
 
 draw()
+
+// The charts are drawn at the page's width, so a resized window redraws the Stats tab to fit.
+let drawnWidth = chartWidth()
+let resizeTimer: ReturnType<typeof setTimeout> | undefined
+window.addEventListener('resize', () => {
+  clearTimeout(resizeTimer)
+  resizeTimer = setTimeout(() => {
+    const w = chartWidth()
+    if (w === drawnWidth) return
+    drawnWidth = w
+    if (state.view === 'stats') draw()
+  }, 150)
+})
 
 /**
  * What the host calls to fill the stats in after the page is up: `setStats` with the history so far (the page
