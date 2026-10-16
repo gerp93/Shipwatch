@@ -131,6 +131,39 @@ export const handAngles = (t: ClockTime): { hour: number; minute: number; second
   second: t.seconds * 6,
 })
 
+// ---- The hour's sweep ---------------------------------------------------------------------------------------
+
+/** The two shades the dial alternates between, as CSS variables with fallbacks for hosts that do not define them. */
+export type Shade = '--clock-a' | '--clock-b'
+export const SHADE_FALLBACK: Record<Shade, string> = { '--clock-a': '#4c8dff', '--clock-b': '#8a7bd8' }
+
+/**
+ * The shades for the hour that is running and the one before it. They take turns: an even hour is shaded A over
+ * B, an odd hour B over A, so as the minute hand sweeps from 12 the new hour's shade grows over the old one's.
+ */
+export const hourShades = (hours: number): [thisHour: Shade, lastHour: Shade] => (hours % 2 === 0 ? ['--clock-a', '--clock-b'] : ['--clock-b', '--clock-a'])
+
+const RIM = 95
+
+const pointOn = (angle: number): [number, number] => {
+  const a = (angle * Math.PI) / 180
+  return [100 + Math.sin(a) * RIM, 100 - Math.cos(a) * RIM]
+}
+
+/**
+ * The two wedges of the dial: `done` from 12 round to the minute hand (this hour so far) and `rest` from the hand
+ * on to 12 (what is left of the dial, still last hour's shade). Either is empty at the extremes of the hour.
+ */
+export const sweepPaths = (minuteAngle: number): { done: string; rest: string } => {
+  const angle = Math.min(360, Math.max(0, minuteAngle))
+  const [x, y] = pointOn(angle)
+  const top = pointOn(0)
+  const r1 = (n: number): string => String(Math.round(n * 10) / 10)
+  const done = angle <= 0 ? '' : angle >= 360 ? `M100 100 L${r1(top[0])} ${r1(top[1])} A${RIM} ${RIM} 0 1 1 ${r1(top[0] - 0.01)} ${r1(top[1])} Z` : `M100 100 L${r1(top[0])} ${r1(top[1])} A${RIM} ${RIM} 0 ${angle > 180 ? 1 : 0} 1 ${r1(x)} ${r1(y)} Z`
+  const rest = angle >= 360 ? '' : angle <= 0 ? `M100 100 L${r1(top[0])} ${r1(top[1])} A${RIM} ${RIM} 0 1 1 ${r1(top[0] - 0.01)} ${r1(top[1])} Z` : `M100 100 L${r1(x)} ${r1(y)} A${RIM} ${RIM} 0 ${360 - angle > 180 ? 1 : 0} 1 ${r1(top[0])} ${r1(top[1])} Z`
+  return { done, rest }
+}
+
 // ---- Drawing -----------------------------------------------------------------------------------------------
 
 const esc = (s: string): string => s.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!)
@@ -182,7 +215,13 @@ export function shipClockSvg(now: number, dots: readonly Dot[], opts: ClockOptio
   const angles = handAngles(clockTime(now))
   const summary = describeHour(summarize(dots.map(d => d.pr), now))
 
+  const sweep = sweepPaths(angles.minute)
+  const [thisHour, lastHour] = hourShades(clockTime(now).hours)
   let body = '<circle class="face" cx="100" cy="100" r="95"/>'
+  // The dial is shaded in two colours: the part the minute hand has swept this hour, and the rest, which keeps
+  // last hour's colour. They swap every hour, so a dot in the older shade was opened the hour before.
+  body += `<path class="sw-rest" d="${sweep.rest}" style="fill:var(${lastHour},${SHADE_FALLBACK[lastHour]});fill-opacity:.22"/>`
+  body += `<path class="sw-done" d="${sweep.done}" style="fill:var(${thisHour},${SHADE_FALLBACK[thisHour]});fill-opacity:.32"/>`
   for (let i = 0; i < 60; i++) {
     if (i % 5 === 0) continue
     const [x1, y1] = point(i * 6, 90)

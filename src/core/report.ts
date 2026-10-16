@@ -87,7 +87,7 @@ table.compact{width:auto;min-width:340px}
 .chip-api.low{color:var(--running);border-color:var(--running)}.chip-api.critical{color:var(--fail);border-color:var(--fail)}
 .logo{height:36px;width:auto;margin-right:4px}select.theme{font:inherit;background:var(--card);color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:4px 8px}
 /* Charts take their text colour from the page so they stay readable on any theme. */
-body{--chart-fg:var(--fg);--chart-strong:var(--fg);--chart-dim:var(--dim)}
+body{--chart-fg:var(--fg);--chart-strong:var(--fg);--chart-dim:var(--dim);--clock-a:var(--accent);--clock-b:var(--pending)}
 /* A VisualAssault theme (a body class from the vendored sheet below) re-points the page's own colours at the shared tokens. */
 body[class$="-theme"]{--bg:var(--color-bg);--fg:var(--color-text);--dim:var(--color-text-muted);--line:var(--color-border);--card:var(--color-surface);
 --accent:var(--color-accent-blue);--on:var(--color-primary-action);--onfg:var(--color-primary-action-text,var(--color-text));
