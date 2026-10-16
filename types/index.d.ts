@@ -34,6 +34,8 @@ export type RecentPr = {
   /** The checks on its latest commit; meaningful while it is open. */
   checks: Checks
   mergedAt: string | null
+  /** When its repo's latest release was published, ISO; a release at or after `mergedAt` includes the merge. Null if the repo has none. */
+  releasedAt?: string | null
 }
 
 export type PrView = {

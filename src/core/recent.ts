@@ -1,5 +1,6 @@
 // The PRs opened in the last stretch of time (an hour, for the ship clock), open or already merged or closed.
-// One cheap search: no commits, just each PR's state and the rollup of its latest commit's checks.
+// One cheap search: no commits, just each PR's state, the rollup of its latest commit's checks, and when its repo last
+// released (so a merged PR can be told from one that has shipped).
 
 import type { Budget } from './budget'
 import { graphql } from './github'
@@ -14,7 +15,7 @@ query($q:String!){
     nodes{
       ... on PullRequest{
         number title url createdAt mergedAt isDraft state
-        repository{ name }
+        repository{ name latestRelease{ publishedAt } }
         commits(last:1){ nodes{ commit{ statusCheckRollup{ state } } } }
       }
     }
@@ -72,6 +73,7 @@ export const fetchRecentPrs = async (
       parked: isParked(String(n.title ?? ''), n.isDraft === true),
       checks: state === 'open' ? checksOf(n.commits?.nodes?.[0]?.commit?.statusCheckRollup?.state) : 'none',
       mergedAt: typeof n.mergedAt === 'string' ? n.mergedAt : null,
+      releasedAt: typeof n.repository.latestRelease?.publishedAt === 'string' ? n.repository.latestRelease.publishedAt : null,
     })
   }
   return prs.sort((a, b) => b.createdAt.localeCompare(a.createdAt))

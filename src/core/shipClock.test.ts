@@ -53,6 +53,9 @@ test('PRs opened in the same minute are put on different tracks so none hides an
 
 test('a dot is coloured by where its PR stands now', () => {
   expect(dotStatus(pr(1, 1, { state: 'merged', mergedAt: '2026-10-15T14:29:00Z' }))).toBe('merged')
+  // A release published after the merge has shipped it; one from before has not.
+  expect(dotStatus(pr(1, 1, { state: 'merged', mergedAt: '2026-10-15T14:29:00Z', releasedAt: '2026-10-15T14:35:00Z' }))).toBe('released')
+  expect(dotStatus(pr(1, 1, { state: 'merged', mergedAt: '2026-10-15T14:29:00Z', releasedAt: '2026-10-15T14:10:00Z' }))).toBe('merged')
   expect(dotStatus(pr(1, 1, { state: 'closed' }))).toBe('closed')
   expect(dotStatus(pr(1, 1, { isDraft: true, parked: true, checks: 'failing' }))).toBe('draft') // a draft is a draft first
   expect(dotStatus(pr(1, 1, { parked: true }))).toBe('draft') // so is one titled do not merge
@@ -73,7 +76,7 @@ test('the hour is summed up in a line', () => {
     pr(6, 90), // outside the hour
   ]
   const s = summarize(prs, NOW)
-  expect(s).toEqual({ opened: 5, merged: 2, open: 2, failing: 1, building: 1, closed: 1 })
+  expect(s).toEqual({ opened: 5, merged: 2, released: 0, open: 2, failing: 1, building: 1, closed: 1 })
   expect(describeHour(s)).toBe('5 PRs opened in the last hour: 2 merged, 2 open (1 failing), 1 closed')
   expect(describeHour(summarize([pr(1, 3)], NOW))).toBe('1 PR opened in the last hour: 1 open')
   expect(describeHour(summarize([], NOW))).toBe('No PRs opened in the last hour')
