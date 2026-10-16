@@ -19,7 +19,7 @@ export const DOT_COLOR: Record<DotStatus, string> = {
   failing: '#e5534b',
   open: '#4c8dff',
   draft: '#8b929c',
-  closed: '#8b929c',
+  closed: '#b8312f',
 }
 
 export const DOT_LABEL: Record<DotStatus, string> = {
