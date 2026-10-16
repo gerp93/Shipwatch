@@ -191,7 +191,7 @@ test('a PR titled do not merge is set aside like a draft: it does not decide whe
   expect(analyze(repo({ pullRequests: { nodes: [pr(null, { isDraft: true })] } }), NOW, 6 * HOUR).headline).toBe('#7 draft')
 })
 
-test('a repo with nothing to act on is Recently merged if its default branch moved in the last few days, else Quiet', () => {
+test('a repo with nothing to act on is level recent (Released or Merged) if its default branch moved in the last few days, else Quiet', () => {
   const release = { tagName: 'v1', publishedAt: '2026-10-05T11:00:00Z' }
   const recent = analyze(repo({ latestRelease: release, headDate: '2026-10-03T12:00:00Z' }), NOW, 6 * HOUR)
   expect(recent.level).toBe('recent')

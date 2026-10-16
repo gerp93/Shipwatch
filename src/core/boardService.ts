@@ -8,7 +8,7 @@ import type { RepoView } from './types'
 export const BOARD_DEFAULTS = {
   /** A missing release this soon after a merge reads as "awaiting", later as "not every commit ships". */
   recentMs: 6 * 60 * 60 * 1000,
-  /** A repo whose default branch was updated this recently, with nothing to act on, is Recently merged rather than Quiet. */
+  /** A repo whose default branch was updated this recently, with nothing to act on, is shown as Released or Merged, without Quiet, rather than with it. */
   activeMs: 3 * 24 * 60 * 60 * 1000,
   /** How long a runner-outage verdict for a commit is trusted: a re-run can change it. */
   infraTtlMs: 5 * 60_000,
