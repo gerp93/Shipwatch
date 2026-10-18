@@ -11,6 +11,7 @@ import type { ApiLimits, Budget } from '../src/core/budget'
 import { claimFix } from '../src/core/fixClaims'
 import type { ClaimStore } from '../src/core/fixClaims'
 import { connect, fetchLimitStatus, resolveOwner } from '../src/core/github'
+import { collectEffort, engineEffortHost, transcriptsDirFor } from '../src/core/effort'
 import { fetchRecentPrs } from '../src/core/recent'
 import { openArgv, renderReport } from '../src/core/report'
 import { headlineLink, safeHref, stepLinks } from '../src/core/links'
@@ -37,7 +38,7 @@ import {
   reposCreatedSince,
 } from '../src/core/stats'
 import { loadStatsCache, refreshStats, statsAreFresh } from '../src/core/statsService'
-import type { Board, Checks, Level, PrView, RecentPr, RepoView, StatsBoard, StatsMode, StepState } from '../src/core/types'
+import type { Board, Checks, Level, PrView, RecentPr, RepoEffort, RepoView, StatsBoard, StatsMode, StepState } from '../src/core/types'
 import type { ViewName } from '../types'
 
 const PANE = 'shipwatch'
@@ -268,6 +269,33 @@ async function loadStats($: any, force = false): Promise<void> {
 let isOpeningReport = false
 
 /**
+ * Session time and tokens per repo from Claude Code's transcripts on this computer, for the report's Builds tab. The
+ * parsing is the core's; this only reaches the files through the engine (`$.fs`, and Node through `$.process` for the
+ * ones over the engine's 4 MiB read limit). Undefined when there is nothing to show; a failure here leaves the report
+ * without the columns rather than without a report.
+ */
+async function readEffort($: any, repoNames: readonly string[]): Promise<Record<string, RepoEffort> | undefined> {
+  try {
+    const dir = transcriptsDirFor({
+      CLAUDE_CONFIG_DIR: await $.env.get('CLAUDE_CONFIG_DIR'),
+      HOME: await $.env.get('HOME'),
+      USERPROFILE: await $.env.get('USERPROFILE'),
+    })
+    if (!dir || repoNames.length === 0) return undefined
+    const host = engineEffortHost({
+      list: path => $.fs.list(path),
+      read: path => $.fs.read(path),
+      run: (argv, init) => $.process.run(argv, init),
+    })
+    const { effort, skipped } = await collectEffort(host, dir, repoNames)
+    if (skipped > 0) $.ui.toast(`Shipwatch: ${skipped} Claude Code transcript${skipped === 1 ? '' : 's'} left out of the Builds numbers (over 4 MiB, and Node is needed to read those)`)
+    return Object.keys(effort).length > 0 ? effort : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/**
  * Writes the full report (a self-contained HTML page, see `renderReport` in the core) to the temp folder and
  * opens it in the default browser. The stats history is brought up to date first, so the page has something
  * to show even if the Stats view was never opened.
@@ -295,10 +323,12 @@ async function openReport($: any): Promise<void> {
       // The points left, as GraphQL reported them with the last dashboard read.
       api = b.points ? { graphql: b.points } : undefined
     }
+    const effort = await readEffort($, b.repos.map((r: RepoView) => r.name))
     const html = renderReport({
       generatedAt,
       board: { owner: b.owner, repos: b.repos },
       stats: { prs: s.prs, repos: s.repos, you: s.you },
+      effort,
       recentPrs,
       api,
     })

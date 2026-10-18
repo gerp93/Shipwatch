@@ -34,7 +34,7 @@ export type ReportData = {
   boardStatus?: BoardStatus
   /**
    * Session time and tokens per repo, from Claude Code's history on this computer, for the Builds tab. Absent when the
-   * host cannot read that history (a report opened by the Claude pane): the tab then shows what GitHub holds alone.
+   * host cannot read that history, or finds none for these repos: the tab then shows what GitHub holds alone.
    */
   effort?: Record<string, RepoEffort>
   /** PRs opened in the last hour with where each stands, for the ship clock's rim; absent means not known. */
@@ -72,7 +72,7 @@ a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
 .btn.on{background:var(--on);color:var(--onfg);border-color:var(--on)}
 .search{font:inherit;background:var(--card);color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:4px 10px;min-width:180px}
 table{width:100%;border-collapse:collapse;margin:8px 0}th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line);vertical-align:top}
-th{font-weight:600;color:var(--dim);white-space:nowrap}th.sortable{cursor:pointer;user-select:none}tr.click{cursor:pointer}tr.click:hover{background:var(--card)}
+th{font-weight:600;color:var(--dim);white-space:nowrap}th.sortable{cursor:pointer;user-select:none}tr.click{cursor:pointer}tr.click:hover{background:var(--card)}tr.sel{background:var(--card)}
 table.compact{width:100%;min-width:340px}.fill{flex:1;min-width:340px}
 .tiles{display:flex;gap:12px;flex-wrap:wrap;margin:12px 0}.tile{flex:1 1 130px;background:var(--card);border:1px solid var(--line);border-radius:8px;padding:10px 16px;min-width:130px}
 .big{font-size:22px;font-weight:600}

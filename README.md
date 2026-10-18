@@ -111,12 +111,14 @@ A click on a row opens that repo's stats. Calendar days and merged-PR numbers co
 Stats is set to.
 
 **Session time and tokens come from this computer.** Claude Code keeps a transcript of every session in
-`~/.claude/projects` (or under `CLAUDE_CONFIG_DIR`), one folder per working directory. The standalone app reads them
-(sessions and the sub-agents they started) and matches each folder to a repo by name: a folder whose name ends with the
-repo's (`...-repos-My-App` is `My_App`, case aside), or a worktree of it. A folder that matches no repo is not read.
-Parsed transcripts are kept in `effort.json` in the app's data folder until their file changes, so only the first read is
-slow (a few seconds for a few hundred megabytes). Nothing leaves the machine. The Claude pane's report has no way to read
-those files, so there the tab shows only what GitHub holds, and says so.
+`~/.claude/projects` (or under `CLAUDE_CONFIG_DIR`), one folder per working directory. The standalone app and the Claude
+pane's report both read them (sessions and the sub-agents they started) and match each folder to a repo by name: a folder
+whose name ends with the repo's (`...-repos-My-App` is `My_App`, case aside), or a worktree of it. A folder that matches no
+repo is not read. The app keeps parsed transcripts in `effort.json` in its data folder until their file changes, so only
+the first read is slow (a few seconds for a few hundred megabytes). The pane reads them each time you open the report,
+through the engine's file reads, which stop at 4 MiB: it runs `node` to boil a bigger transcript down, so **a pane without
+Node on the PATH leaves out the transcripts over 4 MiB** (it says how many in a toast, and they are most of the time).
+With no transcripts found for any repo, the tab shows only what GitHub holds, and says so. Nothing leaves the machine.
 
 What this does not know: time spent away from Claude Code (testing, reading, thinking), work in a clone that is named
 differently from its repo, transcripts you have deleted, and sessions run on other computers.

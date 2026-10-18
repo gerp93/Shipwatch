@@ -47,7 +47,8 @@ type State = {
   mode: StatsMode
   humans: StatsMode
   hidden: string[]
-  repo: string | null
+  /** The repos being looked at; empty means all of them. */
+  repos: string[]
   q: string
   /** 'all', or the text of one pill (see `pillsOf`). */
   level: string
@@ -64,7 +65,7 @@ const state: State = {
   mode: 'combined',
   humans: 'combined',
   hidden: [],
-  repo: null,
+  repos: [],
   q: '',
   level: 'all',
   drafts: storedDrafts(),
@@ -466,13 +467,21 @@ function apiChip(): HTMLElement | null {
   return el('span', { class: `chip-api ${c.tone}`, id: 'api-chip', title: c.title }, c.text)
 }
 
+function toggleRepo(repo: string): void {
+  state.repos = state.repos.includes(repo) ? state.repos.filter(r => r !== repo) : [...state.repos, repo]
+  draw()
+}
+
 function stats(): HTMLElement {
   const s = data.stats
   const ais = aisIn(s.prs)
   const people = humansIn(s.prs)
   const sinceMs = rangeSince(state.range, data.generatedAt, earliestKnown(s.repos, s.prs))
-  const inScope = state.repo ? s.prs.filter(p => p.repo === state.repo) : s.prs
-  const agg = aggregate(inScope, sinceMs, state.mode, hiddenInView(state.hidden, state.mode, state.humans), state.humans)
+  const inScope = state.repos.length > 0 ? s.prs.filter(p => state.repos.includes(p.repo)) : s.prs
+  const hiddenNow = hiddenInView(state.hidden, state.mode, state.humans)
+  const agg = aggregate(inScope, sinceMs, state.mode, hiddenNow, state.humans)
+  // The By-repo chart and table keep listing every repo while some are picked, so more can be added to the comparison.
+  const repoAgg = state.repos.length > 0 ? aggregate(s.prs, sinceMs, state.mode, hiddenNow, state.humans) : agg
   const created = reposCreatedSince(s.repos, sinceMs)
   const sum = (pick: (a: (typeof agg.actors)[number]) => number) => agg.actors.reduce((n, a) => n + pick(a), 0)
   const commits = sum(a => a.commits)
@@ -483,8 +492,8 @@ function stats(): HTMLElement {
     state.sort = { key, dir: state.sort.key === key ? (-state.sort.dir as 1 | -1) : -1 }
     draw()
   }
-  const commitsOf = (r: (typeof agg.repos)[number]) => r.actors.reduce((n, a) => n + a.commits, 0)
-  const keyOf: Record<string, (r: (typeof agg.repos)[number]) => string | number> = {
+  const commitsOf = (r: (typeof repoAgg.repos)[number]) => r.actors.reduce((n, a) => n + a.commits, 0)
+  const keyOf: Record<string, (r: (typeof repoAgg.repos)[number]) => string | number> = {
     repo: r => r.repo.toLowerCase(),
     prs: r => r.prs,
     commits: commitsOf,
@@ -493,7 +502,7 @@ function stats(): HTMLElement {
     you: r => (r.actors.find(a => a.actor === YOU)?.commits ?? 0) / Math.max(1, commitsOf(r)),
   }
   const pick = keyOf[state.sort.key] ?? keyOf.commits!
-  const repoRows = [...agg.repos].sort((a, b) => compare(pick(a), pick(b)) * state.sort.dir)
+  const repoRows = [...repoAgg.repos].sort((a, b) => compare(pick(a), pick(b)) * state.sort.dir)
 
   const tile = (n: string, label: string) => el('div', { class: 'tile' }, el('div', { class: 'big' }, n), el('div', { class: 'dim' }, label))
 
@@ -531,8 +540,13 @@ function stats(): HTMLElement {
           ),
         )
       : null,
-    state.repo
-      ? el('div', { class: 'row' }, el('span', { class: 'chip' }, `Repo: ${state.repo}`, el('button', { class: 'x', title: 'Show every repo', onclick: () => ((state.repo = null), draw()) }, '×')))
+    state.repos.length > 0
+      ? el(
+          'div',
+          { class: 'row wrap' },
+          ...state.repos.map(r => el('span', { class: 'chip' }, r, el('button', { class: 'x', title: `Stop looking at ${r}`, onclick: () => toggleRepo(r) }, '×'))),
+          state.repos.length > 1 ? button('Clear', false, () => ((state.repos = []), draw())) : null,
+        )
       : null,
     el(
       'div',
@@ -583,15 +597,27 @@ function stats(): HTMLElement {
       ? el(
           'div',
           {},
-          el('h3', {}, 'By repo', el('span', { class: 'dim' }, ' · click a repo to look at it alone')),
-          raw(
-            barsSvg(
-              repoRows.slice(0, 12).map(r => ({
-                label: r.repo,
-                parts: r.actors.map(a => ({ label: actorLabel(a.actor), value: a.commits, color: color(a.actor) })),
-                note: `${r.prs} PR${r.prs === 1 ? '' : 's'}`,
-              })),
-              chartWidth(),
+          el('h3', {}, 'By repo', el('span', { class: 'dim' }, ' · click repos to look at them alone or side by side')),
+          el(
+            'div',
+            {
+              onclick: (e: Event) => {
+                const repo = (e.target as Element).closest('[data-pick]')?.getAttribute('data-pick')
+                if (repo) toggleRepo(repo)
+              },
+            },
+            raw(
+              barsSvg(
+                repoRows.slice(0, 12).map(r => ({
+                  label: r.repo,
+                  parts: r.actors.map(a => ({ label: actorLabel(a.actor), value: a.commits, color: color(a.actor) })),
+                  note: `${r.prs} PR${r.prs === 1 ? '' : 's'}`,
+                  pick: r.repo,
+                  selected: state.repos.includes(r.repo),
+                  faded: state.repos.length > 0 && !state.repos.includes(r.repo),
+                })),
+                chartWidth(),
+              ),
             ),
           ),
           el(
@@ -619,7 +645,7 @@ function stats(): HTMLElement {
                 const mine = r.actors.find(a => a.actor === YOU)?.commits ?? 0
                 return el(
                   'tr',
-                  { class: 'click', onclick: () => ((state.repo = r.repo), draw()) },
+                  { class: state.repos.includes(r.repo) ? 'click sel' : 'click', onclick: () => toggleRepo(r.repo) },
                   el('td', {}, r.repo),
                   el('td', {}, String(r.prs)),
                   el('td', {}, compact(c)),
@@ -702,7 +728,7 @@ function builds(): HTMLElement {
       : el(
           'p',
           { class: 'dim' },
-          'Session time and tokens come from Claude Code’s history on this computer, which only the Shipwatch app reads; this view shows what GitHub holds.',
+          'Session time and tokens come from Claude Code’s history on this computer, and none was found for these repos; this view shows what GitHub holds.',
         ),
     list.length === 0
       ? el('p', { class: 'dim' }, 'Nothing merged yet, so there is nothing to profile.')
@@ -735,7 +761,7 @@ function builds(): HTMLElement {
             ...rows.map(p =>
               el(
                 'tr',
-                { class: 'click', onclick: () => ((state.repo = p.repo), (state.view = 'stats'), draw()) },
+                { class: 'click', onclick: () => ((state.repos = [p.repo]), (state.view = 'stats'), draw()) },
                 el('td', {}, p.repo),
                 cell(p.startedAt ? new Date(p.startedAt).toLocaleDateString() : '–'),
                 cell(p.calendarDays ? `${p.calendarDays} d` : '–', p.calendarDays / maxDays),
