@@ -94,7 +94,8 @@ export function legendSvg(parts: Array<{ label: string; color: string }>, width 
   return svg(width, y + 12, body)
 }
 
-export type BarRow = { label: string; parts: ChartPart[]; note?: string }
+/** `pick` makes the row clickable: its value is put in the row's `data-pick`, for the page to read. `selected` shades it; `faded` dims it. */
+export type BarRow = { label: string; parts: ChartPart[]; note?: string; pick?: string; selected?: boolean; faded?: boolean }
 
 /**
  * One horizontal stacked bar per row, all on the same scale (the longest row fills the width), with the
@@ -111,6 +112,10 @@ export function barsSvg(rows: BarRow[], width = 520): string {
   let body = ''
   rows.forEach((row, i) => {
     const y = i * rowH + 3
+    if (row.pick !== undefined) {
+      const attrs = `class="pick" data-pick="${esc(row.pick)}" style="cursor:pointer"${row.faded ? ' opacity=".45"' : ''}`
+      body += `<g ${attrs}><rect x="0" y="${y - 3}" width="${width}" height="${rowH}" fill="${row.selected ? GREY : 'transparent'}" fill-opacity="${row.selected ? '.18' : '1'}"/>`
+    }
     body += `<text x="0" y="${y + 13}">${esc(row.label.length > 24 ? `${row.label.slice(0, 23)}…` : row.label)}</text>`
     let x = labelW
     for (const p of row.parts) {
@@ -120,6 +125,7 @@ export function barsSvg(rows: BarRow[], width = 520): string {
       x += w
     }
     body += `<text class="dim" x="${round(x + 6)}" y="${y + 13}">${esc(row.note ?? String(totals[i]))}</text>`
+    if (row.pick !== undefined) body += '</g>'
   })
   return svg(width, rows.length * rowH + 4, body)
 }
