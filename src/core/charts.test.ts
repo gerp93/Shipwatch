@@ -44,6 +44,15 @@ test('bars share one scale, so a smaller row draws a shorter bar', () => {
   expect(barsSvg([])).toBe('')
 })
 
+test('a bar row can be picked, shaded and faded', () => {
+  const row = { label: 'a', parts: [{ label: 'You', value: 1, color: '#111' }] }
+  const s = barsSvg([{ ...row, pick: 'a"b', selected: true }, { ...row, label: 'b', pick: 'b', faded: true }, { ...row, label: 'c' }])
+  expect(s.match(/data-pick=/g)?.length).toBe(2)
+  expect(s).toContain('data-pick="a&quot;b"')
+  expect(s).toContain('opacity=".45"')
+  expect(s.match(/<g /g)?.length).toBe(s.match(/<\/g>/g)?.length)
+})
+
 test('weekly columns stack and name their week in the tooltip', () => {
   const s = weeksSvg([
     { label: '09-14', parts: parts },
