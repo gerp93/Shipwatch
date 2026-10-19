@@ -4,7 +4,7 @@
 // can replace them while the page is open. Kept out of client.ts so the page script only has to ask for it.
 // Bundled with the rest by scripts/build-report.mjs.
 
-import { DOT_COLOR, DOT_LABEL, clockTime, describeHour, dotStatus, dotsFor, handAngles, inWindow, shipClockSvg, summarize, sweepPaths } from '../core/shipClock'
+import { DOT_COLOR, DOT_LABEL, SHADE_FALLBACK, clockTime, describeHour, dotStatus, dotsFor, handAngles, hourShades, inWindow, shipClockSvg, summarize, sweepPaths, type DotStatus } from '../core/shipClock'
 import type { RecentPr } from '../core/types'
 
 const node = (tag: string, style: string, text = ''): HTMLElement => {
@@ -21,6 +21,40 @@ const clock24 = (ms: number): string => {
 
 /** How many PRs the list beside the clock shows before saying how many more there are. */
 const LIST_MAX = 10
+
+/** The statuses in the colour key, in the order a PR moves through them, then the ones that end differently. */
+const KEY_ORDER: DotStatus[] = ['building', 'ready', 'failing', 'open', 'draft', 'merged', 'released', 'closed']
+
+/** One entry of the colour key: a swatch drawn like the dot (a draft is hollow, a closed PR a little smaller) and what it means. */
+const keyEntry = (swatch: HTMLElement, label: string): HTMLElement => {
+  const entry = node('span', 'display:inline-flex;align-items:center;gap:5px;white-space:nowrap')
+  entry.append(swatch, document.createTextNode(label))
+  return entry
+}
+
+const dotSwatch = (status: DotStatus): HTMLElement => {
+  const size = status === 'closed' ? 9 : 12
+  const fill = status === 'draft' ? `border:2.5px solid ${DOT_COLOR[status]}` : `background:${DOT_COLOR[status]}`
+  return node('span', `display:inline-block;box-sizing:border-box;width:${size}px;height:${size}px;border-radius:50%;${fill}`)
+}
+
+const shadeSwatch = (shade: '--clock-a' | '--clock-b', opacity: number): HTMLElement =>
+  node('span', `display:inline-block;width:14px;height:12px;border-radius:3px;border:1px solid var(--line);background:var(${shade},${SHADE_FALLBACK[shade]});opacity:${opacity}`)
+
+/** What every colour on the clock means: the dots by where a PR stands, and the dial's two shades by which hour it was opened in. */
+function colourKey(now: number): HTMLElement {
+  const [thisHour, lastHour] = hourShades(clockTime(now).hours)
+  const key = node('div', 'color:var(--dim);margin-top:8px;font-size:12px')
+  key.setAttribute('aria-label', 'Colour key')
+  const row = (title: string, entries: HTMLElement[]): void => {
+    const line = node('div', 'display:flex;flex-wrap:wrap;gap:4px 14px;margin-top:4px')
+    line.append(node('span', 'font-weight:600', title), ...entries)
+    key.append(line)
+  }
+  row('Dots:', KEY_ORDER.map(status => keyEntry(dotSwatch(status), DOT_LABEL[status])))
+  row('Dial:', [keyEntry(shadeSwatch(thisHour, 0.6), 'this hour so far'), keyEntry(shadeSwatch(lastHour, 0.45), 'the hour before')])
+  return key
+}
 
 /** What the panel currently draws from; the page can point it at fresh data. */
 let source: () => RecentPr[] | undefined = () => undefined
@@ -71,7 +105,8 @@ function render(panel: HTMLElement): void {
     }
     if (recent.length > LIST_MAX) key.append(node('div', 'color:var(--dim)', `+${recent.length - LIST_MAX} more`))
   }
-  key.append(node('div', 'color:var(--dim);margin-top:6px;font-size:12px', 'The hands show the time. A dot on the rim marks the minute a PR was opened, for the last 60 minutes, coloured by where it stands now. The dial is shaded in two colours that swap each hour: the new colour is this hour so far, so a dot in the older shade was opened the hour before.'))
+  key.append(colourKey(now))
+  key.append(node('div', 'color:var(--dim);margin-top:6px;font-size:12px', 'The hands show the time. A dot on the rim marks the minute a PR was opened, for the last 60 minutes, coloured by where it stands now. The dial is shaded in two colours that swap each hour, so a dot in the older shade was opened the hour before.'))
   panel.append(key)
 }
 
