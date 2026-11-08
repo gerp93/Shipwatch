@@ -11,7 +11,7 @@ import { pathToFileURL } from 'node:url'
 import type { InfraVerdicts } from '../../src/core/boardService'
 import { pace } from '../../src/core/budget'
 import type { ApiLimits, Budget } from '../../src/core/budget'
-import { fetchRecentPrs } from '../../src/core/recent'
+import { boardLag, fetchRecentPrs } from '../../src/core/recent'
 import { renderReport } from '../../src/core/report'
 import type { BoardStatus, ReportData, StatsStatus } from '../../src/core/report'
 import { STATS_FRESH_MS } from '../../src/core/statsService'
@@ -152,6 +152,8 @@ let boardStatus: BoardStatus | null = null
 let refreshTimer: NodeJS.Timeout | undefined
 let recentTimer: NodeJS.Timeout | undefined
 let recentBackoffUntil = 0
+/** PR changes (`repo#number:state`) the clock showed before the list did, already answered with an early read. */
+const chasedLag = new Set<string>()
 
 /** How often the dashboard is read again by itself (stretched when GitHub's allowance runs low), and how soon after a failed read. */
 const REFRESH_MS = 2 * 60_000
@@ -287,6 +289,15 @@ async function updateRecent(): Promise<void> {
     const recent = await fetchRecentPrs(nodeIO(), lastRead.access, lastRead.owner, Date.now() - HOUR_MS, noteBudget)
     lastRead = { ...lastRead, recent }
     toPage(setRecentScript(recent))
+    // The clock is newer than the list (a minute against two or more): when it shows a PR the list has not caught up
+    // with, read the list now instead of leaving the two disagreeing until the next scheduled read. Each change is
+    // chased once, so a list that GitHub itself is slow to update does not turn into a loop.
+    const behind = boardLag(lastRead.repos, recent).filter(k => !chasedLag.has(k))
+    if (behind.length > 0) {
+      for (const k of behind) chasedLag.add(k)
+      if (refreshTimer) clearTimeout(refreshTimer)
+      void refresh()
+    }
   } catch {
     recentBackoffUntil = Date.now() + RETRY_AFTER_ERROR_MS
   }

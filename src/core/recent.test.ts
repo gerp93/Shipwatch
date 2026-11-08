@@ -1,7 +1,8 @@
 import { expect, test } from 'claude-code/testing'
 
 import type { Access, IO } from './ports'
-import { fetchRecentPrs } from './recent'
+import { boardLag, fetchRecentPrs } from './recent'
+import type { RecentPr } from './types'
 
 const ACCESS: Access = { source: 'gh', token: '' }
 
@@ -82,4 +83,17 @@ test('an answer with no search results is an error, not an empty hour', async ()
   }
   expect(failure).toContain('Something went wrong')
   expect(await fetchRecentPrs(fakeIO({ data: { search: { nodes: [] } } }).io, ACCESS, 'me', 0)).toEqual([])
+})
+
+const pr = (number: number, state: RecentPr['state']) => ({ repo: 'app', number, state }) as RecentPr
+const listed = (...numbers: number[]) => [{ name: 'app', prs: numbers.map(number => ({ number })) }] as never
+
+test('the clock is ahead of the list when it shows a merge or a new PR the list lacks', () => {
+  // #1 merged and #2 closed on the clock but still open in the list; #3 is open on the clock and not in the list yet.
+  expect(boardLag(listed(1, 2), [pr(1, 'merged'), pr(2, 'closed'), pr(3, 'open')])).toEqual(['app#1:merged', 'app#2:closed', 'app#3:open'])
+  // Agreeing: open and listed, merged and no longer listed.
+  expect(boardLag(listed(1), [pr(1, 'open'), pr(2, 'merged')])).toEqual([])
+  // A repo the list does not cover is not judged, and a full list may simply not show a PR.
+  expect(boardLag(listed(), [{ ...pr(9, 'merged'), repo: 'other' }])).toEqual([])
+  expect(boardLag(listed(1, 2, 3, 4, 5, 6, 7, 8, 9, 10), [pr(11, 'open')])).toEqual([])
 })
