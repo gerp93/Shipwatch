@@ -6,7 +6,7 @@ import type { Budget } from './budget'
 import { graphql } from './github'
 import { isParked } from './parked'
 import type { Access, IO } from './ports'
-import type { Checks, RecentPr } from './types'
+import type { Checks, RecentPr, RepoView } from './types'
 
 const QUERY = `
 query($q:String!){
@@ -35,6 +35,28 @@ const checksOf = (state: unknown): Checks => {
     default:
       return 'none'
   }
+}
+
+/** The most open PRs the dashboard reads per repo; a repo at this count may have more than it lists. */
+const BOARD_PRS_PER_REPO = 10
+
+/**
+ * The recent PRs the dashboard's repo list disagrees with, as `repo#number:state` (the state is the recent read's,
+ * so a PR is named again only if it changes again). The clock's PRs are read every minute and the repo list less
+ * often, so for a while a PR can be merged on the clock yet "ready to merge" in the list. Those are:
+ * a PR the list still shows open that has been merged or closed, and an open PR the list does not show yet.
+ * Repos the list does not cover are not judged.
+ */
+export const boardLag = (repos: ReadonlyArray<Pick<RepoView, 'name' | 'prs'>>, recent: readonly RecentPr[]): string[] => {
+  const byName = new Map(repos.map(r => [r.name, r]))
+  const out: string[] = []
+  for (const p of recent) {
+    const repo = byName.get(p.repo)
+    if (!repo) continue
+    const listed = repo.prs.some(x => x.number === p.number)
+    if ((p.state !== 'open' && listed) || (p.state === 'open' && !listed && repo.prs.length < BOARD_PRS_PER_REPO)) out.push(`${p.repo}#${p.number}:${p.state}`)
+  }
+  return out
 }
 
 /** The ISO instant GitHub's search wants, to the second and in UTC. */
